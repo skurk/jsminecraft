@@ -1,0 +1,106 @@
+import { Block } from "../world/blocks.js";
+import { Item } from "./items.js";
+export const RECIPES = [
+    { result: Block.Planks, count: 4, requiresTable: false, ingredients: [{ id: Block.Log, count: 1 }] },
+    { result: Item.Stick, count: 4, requiresTable: false, ingredients: [{ id: Block.Planks, count: 2 }] },
+    {
+        result: Block.Torch,
+        count: 4,
+        requiresTable: false,
+        ingredients: [
+            { id: Item.Stick, count: 1 },
+            { id: Item.Coal, count: 1 },
+        ],
+    },
+    {
+        result: Block.CraftingTable,
+        count: 1,
+        requiresTable: false,
+        ingredients: [{ id: Block.Planks, count: 4 }],
+    },
+    {
+        result: Item.WoodSword,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Planks, count: 2 },
+            { id: Item.Stick, count: 1 },
+        ],
+    },
+    {
+        result: Item.WoodShovel,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Planks, count: 1 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
+        result: Item.WoodPickaxe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Planks, count: 3 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
+        result: Item.WoodAxe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Planks, count: 3 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
+        result: Item.StoneSword,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Cobblestone, count: 2 },
+            { id: Item.Stick, count: 1 },
+        ],
+    },
+    {
+        result: Item.StoneShovel,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Cobblestone, count: 1 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
+        result: Item.StonePickaxe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Cobblestone, count: 3 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
+        result: Item.StoneAxe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Cobblestone, count: 3 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+];
+export function hasIngredients(inventory, recipe) {
+    return recipe.ingredients.every((ingredient) => inventory.count(ingredient.id) >= ingredient.count);
+}
+export function craft(inventory, recipe, atTable) {
+    if (recipe.requiresTable && !atTable)
+        return false;
+    if (!hasIngredients(inventory, recipe))
+        return false;
+    for (const ingredient of recipe.ingredients)
+        inventory.take(ingredient.id, ingredient.count);
+    inventory.add(recipe.result, recipe.count);
+    return true;
+}

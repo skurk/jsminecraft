@@ -1,0 +1,19 @@
+/** Item ids live above the block id range. Kept import-free so blocks can reference them. */
+export const Item = {
+    Stick: 100,
+    WoodSword: 110,
+    WoodShovel: 111,
+    WoodPickaxe: 112,
+    WoodAxe: 113,
+    StoneSword: 120,
+    StoneShovel: 121,
+    StonePickaxe: 122,
+    StoneAxe: 123,
+    Apple: 200,
+    RawChicken: 201,
+    RawPork: 202,
+    Mutton: 203,
+    RottenFlesh: 204,
+    Egg: 205,
+    Coal: 206,
+};

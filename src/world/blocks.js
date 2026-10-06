@@ -1,0 +1,414 @@
+import { Item } from "../items/ids.js";
+export const Block = {
+    Air: 0,
+    Grass: 1,
+    Dirt: 2,
+    Stone: 3,
+    Sand: 4,
+    Log: 5,
+    Leaves: 6,
+    Planks: 7,
+    Water: 8,
+    Cobblestone: 9,
+    Bedrock: 10,
+    CraftingTable: 11,
+    Lava: 12,
+    WaterFlow1: 13,
+    WaterFlow2: 14,
+    WaterFlow3: 15,
+    WaterFlow4: 16,
+    Snow: 17,
+    Ice: 18,
+    CoalOre: 19,
+    CopperOre: 20,
+    IronOre: 21,
+    EmeraldOre: 22,
+    DiamondOre: 23,
+    AppleLeaves: 24,
+    Torch: 25,
+    BirchLog: 26,
+    BirchLeaves: 27,
+    PineLog: 28,
+    PineLeaves: 29,
+    TropicalLeaves: 30,
+    Cactus: 31,
+};
+/** Index into the procedurally generated texture atlas. */
+export const Tile = {
+    GrassTop: 0,
+    GrassSide: 1,
+    Dirt: 2,
+    Stone: 3,
+    Sand: 4,
+    LogSide: 5,
+    LogTop: 6,
+    Leaves: 7,
+    Planks: 8,
+    Water: 9,
+    Cobblestone: 10,
+    Bedrock: 11,
+    CraftingTableTop: 12,
+    CraftingTableSide: 13,
+    Lava: 14,
+    Snow: 15,
+    Ice: 16,
+    CoalOre: 17,
+    CopperOre: 18,
+    IronOre: 19,
+    EmeraldOre: 20,
+    DiamondOre: 21,
+    // Slot 22 is spare since apple leaves now reuse the plain leaf tile.
+    Torch: 23,
+    BirchLogSide: 24,
+    BirchLogTop: 25,
+    BirchLeaves: 26,
+    PineLogSide: 27,
+    PineLeaves: 28,
+    TropicalLeaves: 29,
+    CactusSide: 30,
+    CactusTop: 31,
+};
+export const BLOCKS = [
+    {
+        name: 'Air',
+        solid: false,
+        liquid: false,
+        top: 0,
+        side: 0,
+        bottom: 0,
+        hardness: 0,
+        tool: null,
+        requiresTool: false,
+        drop: 0,
+    },
+    {
+        name: 'Grass',
+        solid: true,
+        liquid: false,
+        top: Tile.GrassTop,
+        side: Tile.GrassSide,
+        bottom: Tile.Dirt,
+        hardness: 0.6,
+        tool: 'shovel',
+        requiresTool: false,
+        drop: Block.Grass,
+    },
+    {
+        name: 'Dirt',
+        solid: true,
+        liquid: false,
+        top: Tile.Dirt,
+        side: Tile.Dirt,
+        bottom: Tile.Dirt,
+        hardness: 0.5,
+        tool: 'shovel',
+        requiresTool: false,
+        drop: Block.Dirt,
+    },
+    {
+        name: 'Stone',
+        solid: true,
+        liquid: false,
+        top: Tile.Stone,
+        side: Tile.Stone,
+        bottom: Tile.Stone,
+        hardness: 1.5,
+        tool: 'pickaxe',
+        requiresTool: true,
+        drop: Block.Cobblestone,
+    },
+    {
+        name: 'Sand',
+        solid: true,
+        liquid: false,
+        top: Tile.Sand,
+        side: Tile.Sand,
+        bottom: Tile.Sand,
+        hardness: 0.5,
+        tool: 'shovel',
+        requiresTool: false,
+        drop: Block.Sand,
+    },
+    {
+        name: 'Log',
+        solid: true,
+        liquid: false,
+        top: Tile.LogTop,
+        side: Tile.LogSide,
+        bottom: Tile.LogTop,
+        hardness: 2,
+        tool: 'axe',
+        requiresTool: false,
+        drop: Block.Log,
+    },
+    {
+        name: 'Leaves',
+        solid: true,
+        liquid: false,
+        top: Tile.Leaves,
+        side: Tile.Leaves,
+        bottom: Tile.Leaves,
+        hardness: 0.2,
+        tool: null,
+        requiresTool: false,
+        drop: Block.Leaves,
+    },
+    {
+        name: 'Planks',
+        solid: true,
+        liquid: false,
+        top: Tile.Planks,
+        side: Tile.Planks,
+        bottom: Tile.Planks,
+        hardness: 2,
+        tool: 'axe',
+        requiresTool: false,
+        drop: Block.Planks,
+    },
+    {
+        name: 'Water',
+        solid: false,
+        liquid: true,
+        top: Tile.Water,
+        side: Tile.Water,
+        bottom: Tile.Water,
+        hardness: 0,
+        tool: null,
+        requiresTool: false,
+        drop: Block.Air,
+    },
+    {
+        name: 'Cobblestone',
+        solid: true,
+        liquid: false,
+        top: Tile.Cobblestone,
+        side: Tile.Cobblestone,
+        bottom: Tile.Cobblestone,
+        hardness: 2,
+        tool: 'pickaxe',
+        requiresTool: true,
+        drop: Block.Cobblestone,
+    },
+    {
+        name: 'Bedrock',
+        solid: true,
+        liquid: false,
+        top: Tile.Bedrock,
+        side: Tile.Bedrock,
+        bottom: Tile.Bedrock,
+        hardness: Infinity,
+        tool: null,
+        requiresTool: true,
+        drop: Block.Air,
+    },
+    {
+        name: 'Crafting Table',
+        solid: true,
+        liquid: false,
+        top: Tile.CraftingTableTop,
+        side: Tile.CraftingTableSide,
+        bottom: Tile.Planks,
+        hardness: 2.5,
+        tool: 'axe',
+        requiresTool: false,
+        drop: Block.CraftingTable,
+    },
+    {
+        name: 'Lava',
+        solid: false,
+        liquid: true,
+        top: Tile.Lava,
+        side: Tile.Lava,
+        bottom: Tile.Lava,
+        hardness: 0,
+        tool: null,
+        requiresTool: false,
+        drop: Block.Air,
+    },
+];
+/** How far flowing water travels from its source before drying up. */
+export const MAX_WATER_SPREAD = 4;
+for (let level = 1; level <= MAX_WATER_SPREAD; level++) {
+    BLOCKS.push({
+        name: 'Flowing Water',
+        solid: false,
+        liquid: true,
+        top: Tile.Water,
+        side: Tile.Water,
+        bottom: Tile.Water,
+        hardness: 0,
+        tool: null,
+        requiresTool: false,
+        drop: Block.Air,
+    });
+}
+function mineral(name, id, tile) {
+    return {
+        name,
+        solid: true,
+        liquid: false,
+        top: tile,
+        side: tile,
+        bottom: tile,
+        hardness: 3,
+        tool: 'pickaxe',
+        requiresTool: true,
+        drop: id,
+    };
+}
+BLOCKS.push({
+    name: 'Snow',
+    solid: true,
+    liquid: false,
+    top: Tile.Snow,
+    side: Tile.Snow,
+    bottom: Tile.Dirt,
+    hardness: 0.4,
+    tool: 'shovel',
+    requiresTool: false,
+    drop: Block.Snow,
+}, {
+    name: 'Ice',
+    solid: true,
+    liquid: false,
+    top: Tile.Ice,
+    side: Tile.Ice,
+    bottom: Tile.Ice,
+    hardness: 0.5,
+    tool: 'pickaxe',
+    requiresTool: false,
+    drop: Block.Ice,
+});
+const coalOre = mineral('Coal Ore', Block.CoalOre, Tile.CoalOre);
+// Mining coal ore yields the fuel itself, which is what torches are made from.
+coalOre.drop = Item.Coal;
+BLOCKS.push(coalOre);
+BLOCKS.push(mineral('Copper Ore', Block.CopperOre, Tile.CopperOre));
+BLOCKS.push(mineral('Iron Ore', Block.IronOre, Tile.IronOre));
+BLOCKS.push(mineral('Emerald Ore', Block.EmeraldOre, Tile.EmeraldOre));
+BLOCKS.push(mineral('Diamond Ore', Block.DiamondOre, Tile.DiamondOre));
+BLOCKS.push({
+    name: 'Apple Leaves',
+    solid: true,
+    liquid: false,
+    // Indistinguishable from plain leaves, so the apple is a surprise when it drops.
+    top: Tile.Leaves,
+    side: Tile.Leaves,
+    bottom: Tile.Leaves,
+    hardness: 0.2,
+    tool: null,
+    requiresTool: false,
+    drop: Item.Apple,
+});
+BLOCKS.push({
+    name: 'Torch',
+    solid: false,
+    liquid: false,
+    top: Tile.Torch,
+    side: Tile.Torch,
+    bottom: Tile.Torch,
+    hardness: 0,
+    tool: null,
+    requiresTool: false,
+    drop: Block.Torch,
+    full: false,
+    box: [0.42, 0, 0.42, 0.58, 0.62, 0.58],
+    light: 1,
+});
+function wood(name, id, side, top) {
+    return {
+        name,
+        solid: true,
+        liquid: false,
+        top,
+        side,
+        bottom: top,
+        hardness: 2,
+        tool: 'axe',
+        requiresTool: false,
+        drop: id,
+    };
+}
+function foliage(name, id, tile) {
+    return {
+        name,
+        solid: true,
+        liquid: false,
+        top: tile,
+        side: tile,
+        bottom: tile,
+        hardness: 0.2,
+        tool: null,
+        requiresTool: false,
+        drop: id,
+    };
+}
+BLOCKS.push(wood('Birch Log', Block.BirchLog, Tile.BirchLogSide, Tile.BirchLogTop));
+BLOCKS.push(foliage('Birch Leaves', Block.BirchLeaves, Tile.BirchLeaves));
+BLOCKS.push(wood('Pine Log', Block.PineLog, Tile.PineLogSide, Tile.LogTop));
+BLOCKS.push(foliage('Pine Needles', Block.PineLeaves, Tile.PineLeaves));
+BLOCKS.push(foliage('Tropical Leaves', Block.TropicalLeaves, Tile.TropicalLeaves));
+BLOCKS.push({
+    name: 'Cactus',
+    solid: true,
+    liquid: false,
+    top: Tile.CactusTop,
+    side: Tile.CactusSide,
+    bottom: Tile.CactusTop,
+    hardness: 0.4,
+    tool: 'axe',
+    requiresTool: false,
+    drop: Block.Cactus,
+    full: false,
+    box: [0.06, 0, 0.06, 0.94, 1, 0.94],
+    hurts: 1,
+});
+/** Damage dealt per contact tick, 0 for harmless blocks. */
+export function blockContactDamage(id) {
+    return BLOCKS[id].hurts ?? 0;
+}
+const UNIT_BOX = [0, 0, 0, 1, 1, 1];
+/** False for blocks that do not fill their voxel, so neighbours keep their faces. */
+export function isFullBlock(id) {
+    return BLOCKS[id].full !== false;
+}
+export function blockBox(id) {
+    return BLOCKS[id].box ?? UNIT_BOX;
+}
+export function blockLight(id) {
+    return BLOCKS[id].light ?? 0;
+}
+export function isSolid(id) {
+    return BLOCKS[id].solid;
+}
+export function isWater(id) {
+    return id === Block.Water || (id >= Block.WaterFlow1 && id <= Block.WaterFlow4);
+}
+/** 0 for a source block, 1..MAX_WATER_SPREAD for flows. */
+export function waterLevel(id) {
+    return id === Block.Water ? 0 : id - Block.WaterFlow1 + 1;
+}
+export function waterFlowId(level) {
+    return Block.WaterFlow1 + Math.min(level, MAX_WATER_SPREAD) - 1;
+}
+/** 0 when not a fluid; water variants and lava each share a group. */
+export function fluidGroup(id) {
+    if (isWater(id))
+        return 1;
+    if (id === Block.Lava)
+        return 2;
+    return 0;
+}
+export function isLiquid(id) {
+    return BLOCKS[id].liquid;
+}
+export function isAir(id) {
+    return id === Block.Air;
+}
+export function isBreakable(id) {
+    return id !== Block.Air && Number.isFinite(BLOCKS[id].hardness);
+}
+/** Blocks that fall when the space below them is free. */
+export function hasGravity(id) {
+    return id === Block.Sand;
+}
