@@ -6,6 +6,9 @@ Using three.js for swift and responsive graphics rendering.
 ## Screenshot
 ![Screenshot](https://github.com/skurk/jsminecraft/blob/main/jsminecraft-screenshot.png?raw=true)
 
+## Demo
+[Try the demo on Github](https://htmlpreview.github.io/?https://github.com/skurk/jsminecraft/blob/main/singlefile-standalone.html)
+
 ## Features
 - Enemies (zombies and spiders)
 - Livestock (chickens, horses, sheep, etc)
