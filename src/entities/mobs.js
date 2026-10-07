@@ -9,8 +9,12 @@ const MIN_SPAWN_DISTANCE = 14;
 const MAX_SPAWN_DISTANCE = 30;
 const DESPAWN_DISTANCE = 52;
 const MOB_SIMULATION_DISTANCE = 44;
-const MAX_ANIMALS = 10;
-const ANIMAL_SPAWN_INTERVAL = 7;
+const MAX_ANIMALS = 16;
+const ANIMAL_SPAWN_INTERVAL = 5;
+/** Passive mobs arrive as a group of one species, the way a herd would graze together. */
+const HERD_MIN = 2;
+const HERD_MAX = 4;
+const HERD_SPREAD = 5;
 /** Animals only settle on ground they could graze on. */
 const GRAZEABLE = new Set([Block.Grass, Block.Snow, Block.Sand]);
 /** Cumulative spawn weights for the night-time hostile pool. */
@@ -191,17 +195,36 @@ export class MobManager {
             const type = ANIMAL_TYPES[Math.floor(Math.random() * ANIMAL_TYPES.length)];
             const top = Math.min(CHUNK_HEIGHT - 3, Math.floor(player.position.y) + 10);
             const bottom = Math.max(1, Math.floor(player.position.y) - 8);
-            for (let y = top; y >= bottom; y--) {
-                if (!this.canStandAt(x, y, z, type))
-                    continue;
-                if (!GRAZEABLE.has(this.world.getBlock(x, y - 1, z)))
-                    continue;
-                if (!this.world.isSkyExposed(x, y, z))
-                    continue;
-                this.spawnAt(type, new THREE.Vector3(x + 0.5, y, z + 0.5));
-                return;
-            }
+            const y = this.grazeableGround(x, z, top, bottom, type);
+            if (y === null)
+                continue;
+            this.spawnHerd(type, x, y, z);
+            return;
         }
+    }
+    spawnHerd(type, x, y, z) {
+        this.spawnAt(type, new THREE.Vector3(x + 0.5, y, z + 0.5));
+        const herd = HERD_MIN + Math.floor(Math.random() * (HERD_MAX - HERD_MIN + 1));
+        for (let i = 1; i < herd && this.animalCount < MAX_ANIMALS; i++) {
+            const hx = x + Math.round((Math.random() * 2 - 1) * HERD_SPREAD);
+            const hz = z + Math.round((Math.random() * 2 - 1) * HERD_SPREAD);
+            const hy = this.grazeableGround(hx, hz, y + 4, y - 4, type);
+            if (hy !== null)
+                this.spawnAt(type, new THREE.Vector3(hx + 0.5, hy, hz + 0.5));
+        }
+    }
+    /** Highest open spot in the column that rests on grazeable ground under open sky. */
+    grazeableGround(x, z, top, bottom, type) {
+        for (let y = top; y >= bottom; y--) {
+            if (!this.canStandAt(x, y, z, type))
+                continue;
+            if (!GRAZEABLE.has(this.world.getBlock(x, y - 1, z)))
+                continue;
+            if (!this.world.isSkyExposed(x, y, z))
+                continue;
+            return y;
+        }
+        return null;
     }
     spawnAt(type, position) {
         const scale = type.passive ? 1 : this.difficulty.healthMultiplier;

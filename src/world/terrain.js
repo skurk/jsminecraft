@@ -12,27 +12,29 @@ export const Biome = {
     Tundra: 4,
 };
 const TREES = {
-    oak: { log: Block.Log, leaves: Block.Leaves, minTrunk: 4, extraTrunk: 3, radius: 2, bottom: -2, top: 1, shape: 'round', fruit: true },
+    oak: { log: Block.Log, leaves: Block.Leaves, minTrunk: 5, extraTrunk: 3, radius: 2, bottom: -2, top: 1, shape: 'round', fruit: true },
     birch: { log: Block.BirchLog, leaves: Block.BirchLeaves, minTrunk: 6, extraTrunk: 3, radius: 2, bottom: -2, top: 1, shape: 'round', fruit: false },
     pine: { log: Block.PineLog, leaves: Block.PineLeaves, minTrunk: 7, extraTrunk: 4, radius: 2, bottom: -4, top: 1, shape: 'cone', fruit: false },
-    fir: { log: Block.PineLog, leaves: Block.PineLeaves, minTrunk: 5, extraTrunk: 3, radius: 3, bottom: -5, top: 1, shape: 'cone', fruit: false },
+    fir: { log: Block.PineLog, leaves: Block.PineLeaves, minTrunk: 6, extraTrunk: 3, radius: 3, bottom: -3, top: 1, shape: 'cone', fruit: false },
     tropical: { log: Block.Log, leaves: Block.TropicalLeaves, minTrunk: 9, extraTrunk: 5, radius: 3, bottom: -2, top: 1, shape: 'canopy', fruit: false },
 };
 /** Cactus stands in for a tree in the desert, so it shares the placement rules. */
 const CACTUS = { cactus: true, minTrunk: 1, extraTrunk: 3 };
 const FRUITING_TREE_CHANCE = 0.35;
 const APPLE_LEAF_CHANCE = 0.09;
+/** Lowest leaf block above the ground, leaving room to walk beneath the canopy. */
+const MIN_LEAF_HEIGHT = 3;
 export const BIOMES = [
-    { name: 'Plains', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.03,
+    { name: 'Plains', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.015,
         trees: [[TREES.oak, 5], [TREES.pine, 3], [TREES.fir, 2]] },
-    { name: 'Forest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.18,
+    { name: 'Forest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.09,
         trees: [[TREES.pine, 4], [TREES.fir, 4], [TREES.oak, 3]] },
     { name: 'Desert', surface: Block.Sand, filler: Block.Sand, shore: Block.Sand, treeChance: 0.05,
         trees: [[CACTUS, 1]] },
-    { name: 'Rainforest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.26,
+    { name: 'Rainforest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.13,
         trees: [[TREES.tropical, 1]] },
     // Nordic: mostly birch, with firs filling in.
-    { name: 'Tundra', surface: Block.Snow, filler: Block.Dirt, shore: Block.Ice, treeChance: 0.08,
+    { name: 'Tundra', surface: Block.Snow, filler: Block.Dirt, shore: Block.Ice, treeChance: 0.04,
         trees: [[TREES.birch, 7], [TREES.fir, 3]] },
 ];
 /** Climate changes slowly: the next zone over is typically a 2-4 minute walk. */
@@ -224,7 +226,7 @@ function stamp(chunk, lx, y, lz, id, overwrite) {
 }
 function plantTree(chunk, baseX, baseZ, originX, originZ, profile) {
     const ground = terrainHeight(baseX, baseZ);
-    const trunk = profile.minTrunk + Math.floor(randomAt(baseX, baseZ, SEED + 7) * profile.extraTrunk);
+    let trunk = profile.minTrunk + Math.floor(randomAt(baseX, baseZ, SEED + 7) * profile.extraTrunk);
     const lx = baseX - originX;
     const lz = baseZ - originZ;
     if (profile.cactus) {
@@ -232,6 +234,8 @@ function plantTree(chunk, baseX, baseZ, originX, originZ, profile) {
             stamp(chunk, lx, ground + i, lz, Block.Cactus, true);
         return;
     }
+    // A crown that hangs low is pushed up rather than left blocking the way through.
+    trunk = Math.max(trunk, MIN_LEAF_HEIGHT - profile.bottom);
     for (let i = 1; i <= trunk; i++) {
         stamp(chunk, lx, ground + i, lz, profile.log, true);
     }
