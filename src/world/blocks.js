@@ -17,21 +17,28 @@ export const Block = {
     WaterFlow2: 14,
     WaterFlow3: 15,
     WaterFlow4: 16,
-    Snow: 17,
-    Ice: 18,
-    CoalOre: 19,
-    CopperOre: 20,
-    IronOre: 21,
-    EmeraldOre: 22,
-    DiamondOre: 23,
-    AppleLeaves: 24,
-    Torch: 25,
-    BirchLog: 26,
-    BirchLeaves: 27,
-    PineLog: 28,
-    PineLeaves: 29,
-    TropicalLeaves: 30,
-    Cactus: 31,
+    WaterFlow5: 17,
+    WaterFlow6: 18,
+    WaterFlow7: 19,
+    Snow: 20,
+    Ice: 21,
+    CoalOre: 22,
+    CopperOre: 23,
+    IronOre: 24,
+    EmeraldOre: 25,
+    DiamondOre: 26,
+    AppleLeaves: 27,
+    Torch: 28,
+    BirchLog: 29,
+    BirchLeaves: 30,
+    PineLog: 31,
+    PineLeaves: 32,
+    TropicalLeaves: 33,
+    Cactus: 34,
+    LavaFlow1: 35,
+    LavaFlow2: 36,
+    LavaFlow3: 37,
+    LavaFlow4: 38,
 };
 /** Index into the procedurally generated texture atlas. */
 export const Tile = {
@@ -227,7 +234,7 @@ export const BLOCKS = [
     },
 ];
 /** How far flowing water travels from its source before drying up. */
-export const MAX_WATER_SPREAD = 4;
+export const MAX_WATER_SPREAD = 7;
 for (let level = 1; level <= MAX_WATER_SPREAD; level++) {
     BLOCKS.push({
         name: 'Flowing Water',
@@ -367,6 +374,22 @@ BLOCKS.push({
 export function blockContactDamage(id) {
     return BLOCKS[id].hurts ?? 0;
 }
+// Lava creeps only a third as far as water, as in the Overworld.
+export const MAX_LAVA_SPREAD = 4;
+for (let level = 1; level <= MAX_LAVA_SPREAD; level++) {
+    BLOCKS.push({
+        name: 'Flowing Lava',
+        solid: false,
+        liquid: true,
+        top: Tile.Lava,
+        side: Tile.Lava,
+        bottom: Tile.Lava,
+        hardness: 0,
+        tool: null,
+        requiresTool: false,
+        drop: Block.Air,
+    });
+}
 const UNIT_BOX = [0, 0, 0, 1, 1, 1];
 /** False for blocks that do not fill their voxel, so neighbours keep their faces. */
 export function isFullBlock(id) {
@@ -382,7 +405,17 @@ export function isSolid(id) {
     return BLOCKS[id].solid;
 }
 export function isWater(id) {
-    return id === Block.Water || (id >= Block.WaterFlow1 && id <= Block.WaterFlow4);
+    return id === Block.Water || (id >= Block.WaterFlow1 && id <= Block.WaterFlow7);
+}
+export function isLava(id) {
+    return id === Block.Lava || (id >= Block.LavaFlow1 && id <= Block.LavaFlow4);
+}
+/** 0 for a source block, 1..MAX_LAVA_SPREAD for flows. */
+export function lavaLevel(id) {
+    return id === Block.Lava ? 0 : id - Block.LavaFlow1 + 1;
+}
+export function lavaFlowId(level) {
+    return Block.LavaFlow1 + Math.min(level, MAX_LAVA_SPREAD) - 1;
 }
 /** 0 for a source block, 1..MAX_WATER_SPREAD for flows. */
 export function waterLevel(id) {
@@ -395,9 +428,18 @@ export function waterFlowId(level) {
 export function fluidGroup(id) {
     if (isWater(id))
         return 1;
-    if (id === Block.Lava)
+    if (isLava(id))
         return 2;
     return 0;
+}
+/** Rendered surface height, which is what tapers the edge of a spreading pool. */
+export function fluidHeight(id) {
+    if (isWater(id))
+        return (8 - waterLevel(id)) / 9;
+    // Lava thins over only four levels, so each step drops further.
+    if (isLava(id))
+        return (8 - lavaLevel(id) * 1.75) / 9;
+    return 1;
 }
 export function isLiquid(id) {
     return BLOCKS[id].liquid;

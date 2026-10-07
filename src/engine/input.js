@@ -9,8 +9,10 @@ export class Input {
     locked = false;
     sprintLatch = false;
     lastForwardTap = 0;
+    wheelAccumulator = 0;
     onMouseDown = null;
     onKeyPress = null;
+    onScroll = null;
     onLockChange = null;
     element;
     constructor(element) {
@@ -63,6 +65,23 @@ export class Input {
         });
         window.addEventListener('mouseup', (event) => this.buttons.delete(event.button));
         this.element.addEventListener('contextmenu', (event) => event.preventDefault());
+        window.addEventListener('wheel', (event) => {
+            if (!this.locked)
+                return;
+            event.preventDefault();
+            // Normalised so a trackpad's many small deltas step as one notch.
+            const notch = event.deltaMode === 0 ? 100 : event.deltaMode === 1 ? 3 : 1;
+            this.wheelAccumulator += event.deltaY / notch;
+            // Epsilon, because summing fractions of a notch lands just short of 1.
+            while (this.wheelAccumulator >= 1 - 1e-6) {
+                this.wheelAccumulator -= 1;
+                this.onScroll?.(1);
+            }
+            while (this.wheelAccumulator <= -1 + 1e-6) {
+                this.wheelAccumulator += 1;
+                this.onScroll?.(-1);
+            }
+        }, { passive: false });
     }
     isDown(code) {
         return this.keys.has(code);
@@ -74,6 +93,7 @@ export class Input {
     releaseAll() {
         this.keys.clear();
         this.sprintLatch = false;
+        this.wheelAccumulator = 0;
     }
     isMouseDown(button) {
         return this.buttons.has(button) || (button === 0 && this.attackKeyDown);

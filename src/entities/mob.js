@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildBoxGeometry } from "../engine/boxmodel.js";
 import { moveBody } from "../engine/physics.js";
-import { Block, isWater } from "../world/blocks.js";
+import { Block, isLava, isWater } from "../world/blocks.js";
 import { Item } from "../items/ids.js";
 import { WALK_SPEED } from "../player/player.js";
 const GRAVITY = -28;
@@ -20,6 +20,10 @@ const SHELTER_RADII = [3, 6, 10];
 const BURN_FLASH_INTERVAL = 0.5;
 /** How long a scorched mob lurks in cover before it dares chase again. */
 const SUN_SHY_DURATION = 8;
+const ARROW_SPEED = 26;
+/** Seconds to topple onto its side, and how long the body lingers before it is cleared away. */
+const DEATH_TILT_TIME = 0.4;
+const DEATH_DURATION = 0.8;
 const EGG_MIN_INTERVAL = 40;
 const EGG_MAX_INTERVAL = 100;
 const SUNLIGHT_BURN_DPS = 4;
@@ -87,6 +91,71 @@ export const SPIDER = {
     ],
 };
 export const MOB_TYPES = [ZOMBIE, SPIDER];
+const CREEPER_BODY = 0x58a447;
+const CREEPER_DARK = 0x0f1a10;
+export const CREEPER = {
+    id: 'creeper',
+    name: 'Creeper',
+    health: 20,
+    damage: 0,
+    speed: 2.6,
+    radius: 0.3,
+    height: 1.7,
+    jumpSpeed: 8.2,
+    burnsInSunlight: false,
+    alwaysHostile: true,
+    passive: false,
+    drop: Item.Gunpowder,
+    drops: [Item.Gunpowder],
+    dropRange: true,
+    // Stops at 3 blocks, swells for 1.5s, and aborts if the target gets 7 away.
+    fuse: { trigger: 3, seconds: 1.5, cancel: 7, power: 3, maxDamage: 22 },
+    parts: [
+        { size: [0.25, 0.37, 0.25], offset: [-0.12, 0.19, -0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.25, 0.37, 0.25], offset: [0.12, 0.19, -0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.25, 0.37, 0.25], offset: [-0.12, 0.19, 0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.25, 0.37, 0.25], offset: [0.12, 0.19, 0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.5, 0.75, 0.25], offset: [0, 0.75, 0], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.5, 0.5, 0.5], offset: [0, 1.37, 0], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.13, 0.13, 0.03], offset: [-0.13, 1.47, -0.26], color: CREEPER_DARK },
+        { size: [0.13, 0.13, 0.03], offset: [0.13, 1.47, -0.26], color: CREEPER_DARK },
+        { size: [0.13, 0.22, 0.03], offset: [0, 1.3, -0.26], color: CREEPER_DARK },
+        { size: [0.28, 0.1, 0.03], offset: [0, 1.36, -0.26], color: CREEPER_DARK },
+    ],
+};
+const BONE = 0xd8d6cb;
+const BOW_WOOD = 0x6b4a26;
+export const SKELETON = {
+    id: 'skeleton',
+    name: 'Skeleton',
+    health: 20,
+    damage: 0,
+    speed: 2.6,
+    radius: 0.3,
+    height: 1.99,
+    jumpSpeed: 8.2,
+    burnsInSunlight: true,
+    alwaysHostile: true,
+    passive: false,
+    drop: Item.Bone,
+    drops: [Item.Bone, Item.Arrow],
+    dropRange: true,
+    // Fires from 15 blocks and backs off if crowded, as in Java Edition.
+    bow: { range: 15, cooldown: 2, retreat: 4, damage: [3, 5] },
+    parts: [
+        { size: [0.13, 0.75, 0.13], offset: [-0.1, 0.37, 0], color: BONE },
+        { size: [0.13, 0.75, 0.13], offset: [0.1, 0.37, 0], color: BONE },
+        { size: [0.4, 0.6, 0.2], offset: [0, 1.05, 0], color: BONE },
+        { size: [0.13, 0.13, 0.5], offset: [-0.26, 1.28, -0.2], color: BONE },
+        { size: [0.13, 0.13, 0.5], offset: [0.26, 1.28, -0.2], color: BONE },
+        { size: [0.44, 0.44, 0.44], offset: [0, 1.6, 0], color: BONE },
+        { size: [0.09, 0.09, 0.03], offset: [-0.1, 1.64, -0.23], color: 0x101010 },
+        { size: [0.09, 0.09, 0.03], offset: [0.1, 1.64, -0.23], color: 0x101010 },
+        { size: [0.05, 0.62, 0.05], offset: [-0.3, 1.28, -0.44], color: BOW_WOOD },
+        { size: [0.05, 0.08, 0.1], offset: [-0.3, 1.58, -0.4], color: BOW_WOOD },
+        { size: [0.05, 0.08, 0.1], offset: [-0.3, 0.98, -0.4], color: BOW_WOOD },
+    ],
+};
 const CHICKEN_BODY = 0xe9e9e4;
 const CHICKEN_BEAK = 0xe0a62e;
 export const CHICKEN = {
@@ -232,6 +301,13 @@ export class Mob {
     shelterPhase = Math.random() * Math.PI * 2;
     burnFlash = 0;
     sunShyTimer = 0;
+    fuseTimer = 0;
+    shootTimer = 0;
+    strafe = Math.random() < 0.5 ? 1 : -1;
+    pendingShot = null;
+    exploded = false;
+    dying = false;
+    deathTimer = 0;
     eggTimer = EGG_MIN_INTERVAL + Math.random() * (EGG_MAX_INTERVAL - EGG_MIN_INTERVAL);
     pendingEgg = false;
     material;
@@ -251,6 +327,8 @@ export class Mob {
         return this.height * 0.85;
     }
     hurt(amount, knockback) {
+        if (this.dying)
+            return;
         this.health -= amount;
         this.hurtTimer = 0.25;
         this.velocity.x += knockback.x * 6;
@@ -263,23 +341,42 @@ export class Mob {
         if (this.onGround)
             this.velocity.y = 5;
         if (this.health <= 0)
+            this.die();
+    }
+    die() {
+        this.dying = true;
+        this.deathTimer = 0;
+        this.velocity.set(0, 0, 0);
+    }
+    /** Tips the body onto its side and holds it there, so a kill reads before the corpse vanishes. */
+    updateDeath(dt, world) {
+        this.deathTimer += dt;
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+        moveBody(world, this, dt);
+        const roll = Math.min(1, this.deathTimer / DEATH_TILT_TIME) * (Math.PI / 2);
+        this.mesh.position.copy(this.position);
+        this.mesh.rotation.set(0, this.yaw, roll);
+        this.mesh.material = this.hurtMaterial;
+        this.mesh.scale.setScalar(1);
+        if (this.deathTimer >= DEATH_DURATION)
             this.dead = true;
     }
     update(dt, world, player, dark, daylight, difficulty) {
         this.attackTimer = Math.max(0, this.attackTimer - dt);
         this.hurtTimer = Math.max(0, this.hurtTimer - dt);
+        if (this.dying) {
+            this.updateDeath(dt, world);
+            return;
+        }
         const scorching = this.type.burnsInSunlight && daylight &&
             world.isSkyExposed(Math.floor(this.position.x), Math.floor(this.position.y), Math.floor(this.position.z));
         if (scorching) {
             this.health -= SUNLIGHT_BURN_DPS * dt;
             this.sunShyTimer = SUN_SHY_DURATION;
-            this.burnFlash -= dt;
-            if (this.burnFlash <= 0) {
-                this.burnFlash = BURN_FLASH_INTERVAL;
-                this.hurtTimer = 0.15;
-            }
+            this.pulseBurn(dt);
             if (this.health <= 0) {
-                this.dead = true;
+                this.die();
                 return;
             }
             this.updateShelterSearch(dt, world);
@@ -300,9 +397,21 @@ export class Mob {
         const sheltering = this.shelterX !== 0 || this.shelterZ !== 0;
         // Fresh out of the sun: hold the shade rather than stepping straight back into it.
         const cowering = !sheltering && this.sunShyTimer > 0;
+        const priming = this.updateFuse(dt, distance, chasing, world, player, difficulty);
+        const aiming = this.updateBow(dt, distance, chasing, toPlayer, difficulty);
         let dirX = 0;
         let dirZ = 0;
-        if (sheltering) {
+        if (this.dead)
+            return;
+        if (priming) {
+            dirX = 0;
+            dirZ = 0;
+        }
+        else if (aiming) {
+            dirX = aiming.x;
+            dirZ = aiming.z;
+        }
+        else if (sheltering) {
             dirX = this.shelterX;
             dirZ = this.shelterZ;
         }
@@ -346,14 +455,15 @@ export class Mob {
         this.velocity.x = dirX * speed;
         this.velocity.z = dirZ * speed;
         const inFluid = world.getBlock(Math.floor(this.position.x), Math.floor(this.position.y + 0.2), Math.floor(this.position.z));
-        if (inFluid === Block.Lava) {
+        if (isLava(inFluid)) {
             this.health -= LAVA_DPS * dt;
+            this.pulseBurn(dt);
             if (this.health <= 0) {
-                this.dead = true;
+                this.die();
                 return;
             }
         }
-        if (isWater(inFluid) || inFluid === Block.Lava) {
+        if (isWater(inFluid) || isLava(inFluid)) {
             this.velocity.y = SWIM_RISE;
         }
         else {
@@ -381,8 +491,97 @@ export class Mob {
         this.mesh.position.set(this.position.x, this.position.y + bob, this.position.z);
         this.mesh.rotation.y = this.yaw;
         const hurting = this.hurtTimer > 0;
-        this.mesh.material = hurting ? this.hurtMaterial : this.material;
-        this.mesh.scale.setScalar(hurting ? 1.15 : 1);
+        // A priming creeper owns its scale, so the hit pop must not overwrite the swell.
+        const swelling = this.fuseTimer > 0;
+        this.mesh.material = hurting || swelling ? this.hurtMaterial : this.material;
+        if (!swelling)
+            this.mesh.scale.setScalar(hurting ? 1.15 : 1);
+    }
+    /** Reuses the hit flash so steady burn damage is visible, not silent. */
+    pulseBurn(dt) {
+        this.burnFlash -= dt;
+        if (this.burnFlash <= 0) {
+            this.burnFlash = BURN_FLASH_INTERVAL;
+            this.hurtTimer = 0.15;
+        }
+    }
+    /** Swells while the player stays close, then detonates. Returns true while priming. */
+    updateFuse(dt, distance, chasing, world, player, difficulty) {
+        const fuse = this.type.fuse;
+        if (!fuse)
+            return false;
+        if (!chasing || distance > fuse.cancel) {
+            this.fuseTimer = 0;
+            this.mesh.scale.setScalar(1);
+            return false;
+        }
+        if (this.fuseTimer === 0 && distance > fuse.trigger)
+            return false;
+        this.fuseTimer += dt;
+        const swell = this.fuseTimer / fuse.seconds;
+        this.mesh.scale.setScalar(1 + swell * 0.4);
+        if (this.fuseTimer < fuse.seconds)
+            return true;
+        this.explode(world, player, difficulty);
+        return true;
+    }
+    explode(world, player, difficulty) {
+        const fuse = this.type.fuse;
+        const radius = fuse.power * 1.33;
+        const origin = this.position.clone();
+        origin.y += this.height * 0.5;
+        const reach = origin.distanceTo(player.eyePosition);
+        if (reach < radius) {
+            const falloff = 1 - reach / radius;
+            player.hurt(fuse.maxDamage * falloff * difficulty.damageMultiplier);
+            const push = player.position.clone().sub(this.position).setY(0).normalize();
+            player.applyKnockback(push.x * 9, push.z * 9, 6);
+        }
+        const cx = Math.floor(origin.x);
+        const cy = Math.floor(origin.y);
+        const cz = Math.floor(origin.z);
+        const blocks = Math.floor(radius);
+        for (let dy = -blocks; dy <= blocks; dy++) {
+            for (let dz = -blocks; dz <= blocks; dz++) {
+                for (let dx = -blocks; dx <= blocks; dx++) {
+                    if (dx * dx + dy * dy + dz * dz > blocks * blocks)
+                        continue;
+                    const id = world.getBlock(cx + dx, cy + dy, cz + dz);
+                    if (id === Block.Air || id === Block.Bedrock)
+                        continue;
+                    world.setBlock(cx + dx, cy + dy, cz + dz, Block.Air);
+                }
+            }
+        }
+        this.exploded = true;
+        this.dead = true;
+    }
+    /** Keeps bow range and fires on cooldown. Returns a strafe direction while engaged. */
+    updateBow(dt, distance, chasing, toPlayer, difficulty) {
+        const bow = this.type.bow;
+        if (!bow)
+            return null;
+        this.shootTimer = Math.max(0, this.shootTimer - dt);
+        if (!chasing || distance > bow.range)
+            return null;
+        if (this.shootTimer === 0) {
+            this.shootTimer = bow.cooldown * (2 - difficulty.speedMultiplier);
+            const aim = toPlayer.clone().normalize();
+            // Lift the shot slightly so gravity does not drop it short.
+            aim.y += 0.1;
+            const [low, high] = bow.damage;
+            this.pendingShot = {
+                direction: aim.normalize(),
+                damage: (low + Math.random() * (high - low)) * difficulty.damageMultiplier,
+            };
+        }
+        const flat = Math.hypot(toPlayer.x, toPlayer.z) || 1;
+        const towardX = toPlayer.x / flat;
+        const towardZ = toPlayer.z / flat;
+        // Back off when crowded, otherwise circle the target.
+        if (distance < bow.retreat)
+            return { x: -towardX, z: -towardZ };
+        return { x: -towardZ * this.strafe, z: towardX * this.strafe };
     }
     /** Looks for open ground with something overhead, so burning mobs make for cover. */
     updateShelterSearch(dt, world) {

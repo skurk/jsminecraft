@@ -4,6 +4,7 @@ import { DEFAULT_DIFFICULTY, DIFFICULTIES } from "./engine/difficulty.js";
 import { Input } from "./engine/input.js";
 import { Sky } from "./engine/sky.js";
 import { Weather } from "./engine/weather.js";
+import { Explosions } from "./engine/explosion.js";
 import { ItemManager } from "./entities/item.js";
 import { MobManager } from "./entities/mobs.js";
 import { CHICKEN } from "./entities/mob.js";
@@ -12,7 +13,7 @@ import { Hand } from "./player/hand.js";
 import { HOTBAR_SIZE, Hotbar } from "./player/hotbar.js";
 import { Inventory } from "./player/inventory.js";
 import { Player } from "./player/player.js";
-import { BLOCKS, Block, isBreakable, isWater } from "./world/blocks.js";
+import { BLOCKS, Block, isBreakable, isLava, isWater } from "./world/blocks.js";
 import { CHUNK_SIZE } from "./world/chunk.js";
 import { SEA_LEVEL, biomeNameAt, terrainHeight } from "./world/terrain.js";
 import { updateFluidAnimation } from "./world/textures.js";
@@ -56,9 +57,12 @@ const world = new World(scene, RENDER_DISTANCE);
 const day = new DayCycle();
 const sky = new Sky(scene);
 const weather = new Weather(scene);
+const explosions = new Explosions(scene);
 const mobs = new MobManager(scene, world);
 const items = new ItemManager(scene, world);
 mobs.onDropItem = (id, x, y, z) => items.spawn(id, x, y, z);
+mobs.onShoot = (origin, direction, damage) => items.throwItem(Item.Arrow, origin, direction, { speed: 26, hurts: damage, lift: 0 });
+mobs.onExplode = (position, power) => explosions.spawn(position, power);
 items.onThrownBreak = (id, position) => {
     if (id === Item.Egg && Math.random() < EGG_HATCH_CHANCE)
         mobs.spawnAt(CHICKEN, position.clone());
@@ -83,7 +87,7 @@ function findSpawn() {
         if (height <= SEA_LEVEL + 1)
             continue;
         const ground = world.getBlock(x, height, z);
-        if (ground === Block.Lava || !world.isSolidAt(x, height, z))
+        if (isLava(ground) || !world.isSolidAt(x, height, z))
             continue;
         if (world.getBlock(x, height + 1, z) !== Block.Air)
             continue;
@@ -153,6 +157,12 @@ input.onKeyPress = (code) => {
             refreshHotbar();
         }
     }
+};
+input.onScroll = (direction) => {
+    if (menu.open)
+        return;
+    hotbar.selected = (hotbar.selected + direction + HOTBAR_SIZE) % HOTBAR_SIZE;
+    refreshHotbar();
 };
 function heldItem() {
     const id = hotbar.item;
@@ -290,10 +300,10 @@ function updateHighlight() {
     if (hit)
         highlight.position.set(hit.block.x + 0.5, hit.block.y + 0.5, hit.block.z + 0.5);
 }
-function updateAtmosphere() {
+function updateAtmosphere(dt) {
     const eye = player.eyePosition;
     const eyeBlock = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z));
-    const inLava = eyeBlock === Block.Lava;
+    const inLava = isLava(eyeBlock);
     const underwater = isWater(eyeBlock);
     const fog = scene.fog;
     const brightness = Math.min(1, day.brightness * weather.lightScale + weather.flash * 0.5);
@@ -325,7 +335,7 @@ function updateAtmosphere() {
     items.setDaylight(brightness);
     hand.setDaylight(brightness);
     sky.setVisible(!underwater && !inLava);
-    sky.update(camera.position, day);
+    sky.update(camera.position, day, dt, weather.overcast);
 }
 function respawn() {
     player.respawn(spawnPoint.x, spawnPoint.y, spawnPoint.z);
@@ -369,6 +379,7 @@ function animate() {
         items.update(dt, player, inventory);
         weather.update(dt, player, world);
     }
+    explosions.update(dt);
     updateMining(dt);
     updateHeldItem();
     hand.update(dt);
@@ -395,7 +406,7 @@ function animate() {
     player.applyTo(camera);
     world.update(player.position);
     updateHighlight();
-    updateAtmosphere();
+    updateAtmosphere(dt);
     debugTimer += dt;
     if (debugTimer > 0.25) {
         debugTimer = 0;

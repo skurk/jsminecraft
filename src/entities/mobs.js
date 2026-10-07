@@ -3,7 +3,7 @@ import { DEFAULT_DIFFICULTY, DIFFICULTIES } from "../engine/difficulty.js";
 import { Item } from "../items/ids.js";
 import { Block } from "../world/blocks.js";
 import { CHUNK_HEIGHT } from "../world/chunk.js";
-import { ANIMAL_TYPES, Mob, SPIDER, ZOMBIE } from "./mob.js";
+import { ANIMAL_TYPES, CREEPER, Mob, SKELETON, SPIDER, ZOMBIE } from "./mob.js";
 const SPAWN_ATTEMPTS = 12;
 const MIN_SPAWN_DISTANCE = 14;
 const MAX_SPAWN_DISTANCE = 30;
@@ -13,6 +13,22 @@ const MAX_ANIMALS = 10;
 const ANIMAL_SPAWN_INTERVAL = 7;
 /** Animals only settle on ground they could graze on. */
 const GRAZEABLE = new Set([Block.Grass, Block.Snow, Block.Sand]);
+/** Cumulative spawn weights for the night-time hostile pool. */
+const HOSTILE_POOL = [
+    { type: ZOMBIE, weight: 0.4 },
+    { type: SKELETON, weight: 0.25 },
+    { type: CREEPER, weight: 0.2 },
+    { type: SPIDER, weight: 0.15 },
+];
+function pickHostile() {
+    let roll = Math.random();
+    for (const entry of HOSTILE_POOL) {
+        roll -= entry.weight;
+        if (roll <= 0)
+            return entry.type;
+    }
+    return ZOMBIE;
+}
 export class MobManager {
     mobs = [];
     scene;
@@ -23,6 +39,8 @@ export class MobManager {
     spawnTimer = 0;
     animalTimer = 0;
     onDropItem = null;
+    onShoot = null;
+    onExplode = null;
     constructor(scene, world) {
         this.scene = scene;
         this.world = world;
@@ -80,6 +98,18 @@ export class MobManager {
                 mob.pendingEgg = false;
                 this.onDropItem?.(Item.Egg, mob.position.x, mob.position.y + 0.3, mob.position.z);
             }
+            if (mob.pendingShot) {
+                const shot = mob.pendingShot;
+                mob.pendingShot = null;
+                const muzzle = new THREE.Vector3(mob.position.x, mob.position.y + mob.height * 0.8, mob.position.z);
+                muzzle.addScaledVector(shot.direction, mob.radius + 0.4);
+                this.onShoot?.(muzzle, shot.direction, shot.damage);
+            }
+            if (mob.exploded) {
+                const blast = mob.position.clone();
+                blast.y += mob.height * 0.5;
+                this.onExplode?.(blast, mob.type.fuse.power);
+            }
             if (mob.dead) {
                 this.dropLoot(mob);
                 this.remove(i);
@@ -87,15 +117,23 @@ export class MobManager {
         }
     }
     dropLoot(mob) {
-        const drop = mob.type.drop;
-        if (drop === null || drop === undefined)
+        // A creeper that detonated is consumed by the blast and leaves nothing.
+        if (mob.exploded)
             return;
-        this.onDropItem?.(drop, mob.position.x, mob.position.y + 0.3, mob.position.z);
+        for (const drop of mob.type.drops ?? [mob.type.drop]) {
+            if (drop === null || drop === undefined)
+                continue;
+            const count = mob.type.dropRange ? Math.floor(Math.random() * 3) : 1;
+            for (let i = 0; i < count; i++)
+                this.onDropItem?.(drop, mob.position.x, mob.position.y + 0.3, mob.position.z);
+        }
     }
     /** Returns the closest mob hit by the ray, along with the hit distance. */
     raycast(origin, direction, maxDistance) {
         let closest = null;
         for (const mob of this.mobs) {
+            if (mob.dying)
+                continue;
             const min = new THREE.Vector3(mob.position.x - mob.radius, mob.position.y, mob.position.z - mob.radius);
             const max = new THREE.Vector3(mob.position.x + mob.radius, mob.position.y + mob.height, mob.position.z + mob.radius);
             const distance = rayBoxDistance(origin, direction, min, max);
@@ -126,7 +164,7 @@ export class MobManager {
             const radius = MIN_SPAWN_DISTANCE + Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
             const x = Math.floor(player.position.x + Math.cos(angle) * radius);
             const z = Math.floor(player.position.z + Math.sin(angle) * radius);
-            const type = Math.random() < 0.65 ? ZOMBIE : SPIDER;
+            const type = pickHostile();
             const top = Math.min(CHUNK_HEIGHT - 3, Math.floor(player.position.y) + 10);
             const bottom = Math.max(1, Math.floor(player.position.y) - 16);
             for (let y = top; y >= bottom; y--) {

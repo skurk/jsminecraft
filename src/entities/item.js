@@ -48,6 +48,7 @@ class ItemDrop {
     age = 0;
     thrown = false;
     broke = false;
+    hurts = 0;
     spinOffset = Math.random() * Math.PI * 2;
     constructor(blockId, position, material, geometry) {
         this.blockId = blockId;
@@ -59,7 +60,7 @@ class ItemDrop {
     update(dt, world, player) {
         this.age += dt;
         if (this.thrown)
-            return this.updateThrown(dt, world);
+            return this.updateThrown(dt, world, player);
         const target = player.position.clone();
         target.y += 0.9;
         const toPlayer = target.sub(this.position);
@@ -84,10 +85,18 @@ class ItemDrop {
         this.mesh.rotation.y = this.spinOffset + this.age * 1.8;
         return false;
     }
-    updateThrown(dt, world) {
+    updateThrown(dt, world, player) {
         const before = this.velocity.clone();
         this.velocity.y = Math.max(this.velocity.y + GRAVITY * dt, -30);
         moveBody(world, this, dt);
+        if (this.hurts > 0) {
+            const chest = player.position.clone();
+            chest.y += 1;
+            if (chest.distanceTo(this.position) < 0.7) {
+                player.damage(this.hurts);
+                this.broke = true;
+            }
+        }
         // moveBody zeroes an axis on contact, which is how the egg knows it hit something.
         const stopped = (before.x !== 0 && this.velocity.x === 0) ||
             (before.z !== 0 && this.velocity.z === 0) ||
@@ -152,13 +161,14 @@ export class ItemManager {
         this.create(itemId, x, y, z);
     }
     /** Hurls an item forward; it shatters on the first thing it touches. */
-    throwItem(itemId, origin, direction) {
+    throwItem(itemId, origin, direction, { speed = THROW_SPEED, hurts = 0, lift = 2 } = {}) {
         if (this.drops.length >= MAX_DROPS)
             return;
         const drop = this.create(itemId, origin.x, origin.y, origin.z);
         drop.thrown = true;
-        drop.velocity.copy(direction).normalize().multiplyScalar(THROW_SPEED);
-        drop.velocity.y += 2;
+        drop.hurts = hurts;
+        drop.velocity.copy(direction).normalize().multiplyScalar(speed);
+        drop.velocity.y += lift;
     }
     update(dt, player, inventory) {
         for (let i = this.drops.length - 1; i >= 0; i--) {

@@ -16,4 +16,7 @@ export const Item = {
     RottenFlesh: 204,
     Egg: 205,
     Coal: 206,
+    Gunpowder: 207,
+    Bone: 208,
+    Arrow: 209,
 };

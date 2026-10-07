@@ -1,10 +1,14 @@
 import * as THREE from 'three';
-import { Block, MAX_WATER_SPREAD, hasGravity, isLiquid, isSolid, isWater, waterFlowId, waterLevel, } from "./blocks.js";
+import { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, hasGravity, isLava, isLiquid, isSolid, isWater, lavaFlowId, lavaLevel, waterFlowId, waterLevel, } from "./blocks.js";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey } from "./chunk.js";
 import { buildChunkGeometry, TORCH_RANGE } from "./mesher.js";
 import { generateChunk } from "./terrain.js";
 import { atlasTexture } from "./textures.js";
 const MAX_BUILDS_PER_FRAME = 3;
+// Physics ticks between fluid steps. The Overworld spec is 5 game ticks per
+// block for water and 30 for lava, against this game's 0.08s physics tick.
+const WATER_TICKS = 3;
+const LAVA_TICKS = 19;
 const HORIZONTAL = [
     [1, 0],
     [-1, 0],
@@ -27,6 +31,7 @@ export class World {
     waterMaterial;
     lavaMaterial;
     pendingUpdates = new Set();
+    tickCount = 0;
     torches = new Map();
     daylightUniform = { value: 1 };
     constructor(scene, renderDistance = 6) {
@@ -115,8 +120,11 @@ export class World {
     }
     /** Steps queued block updates by one voxel; call at a fixed rate. */
     tickPhysics() {
+        this.tickCount++;
         if (this.pendingUpdates.size === 0)
             return;
+        const waterDue = this.tickCount % WATER_TICKS === 0;
+        const lavaDue = this.tickCount % LAVA_TICKS === 0;
         const batch = this.pendingUpdates;
         this.pendingUpdates = new Set();
         const positions = [];
@@ -136,8 +144,19 @@ export class World {
                 this.setBlock(x, y - 1, z, id);
                 continue;
             }
-            if (isWater(id))
-                this.flowWater(x, y, z, id);
+            // Fluids that are not due yet stay queued so they step on their own cadence.
+            if (isWater(id)) {
+                if (waterDue)
+                    this.flowWater(x, y, z, id);
+                else
+                    this.pendingUpdates.add(`${x},${y},${z}`);
+            }
+            else if (isLava(id)) {
+                if (lavaDue)
+                    this.flowLava(x, y, z, id);
+                else
+                    this.pendingUpdates.add(`${x},${y},${z}`);
+            }
         }
     }
     flowWater(x, y, z, id) {
@@ -172,9 +191,50 @@ export class World {
         }
         return false;
     }
+    flowLava(x, y, z, id) {
+        // Lava meeting water sets solid, which is what stops flows underground.
+        if (this.touchesWater(x, y, z)) {
+            this.setBlock(x, y, z, Block.Cobblestone);
+            return;
+        }
+        const level = lavaLevel(id);
+        if (level > 0 && !this.lavaSupplied(x, y, z, level)) {
+            this.setBlock(x, y, z, Block.Air);
+            return;
+        }
+        if (this.getBlock(x, y - 1, z) === Block.Air) {
+            this.setBlock(x, y - 1, z, lavaFlowId(1));
+            return;
+        }
+        if (level >= MAX_LAVA_SPREAD)
+            return;
+        const next = lavaFlowId(level + 1);
+        for (const [dx, dz] of HORIZONTAL) {
+            if (this.getBlock(x + dx, y, z + dz) === Block.Air) {
+                this.setBlock(x + dx, y, z + dz, next);
+            }
+        }
+    }
+    lavaSupplied(x, y, z, level) {
+        if (isLava(this.getBlock(x, y + 1, z)))
+            return true;
+        for (const [dx, dz] of HORIZONTAL) {
+            const neighbor = this.getBlock(x + dx, y, z + dz);
+            if (isLava(neighbor) && lavaLevel(neighbor) < level)
+                return true;
+        }
+        return false;
+    }
+    touchesWater(x, y, z) {
+        for (const [dx, dy, dz] of NEIGHBORS) {
+            if (isWater(this.getBlock(x + dx, y + dy, z + dz)))
+                return true;
+        }
+        return false;
+    }
     quenchLava(x, y, z) {
         for (const [dx, dy, dz] of NEIGHBORS) {
-            if (this.getBlock(x + dx, y + dy, z + dz) === Block.Lava) {
+            if (isLava(this.getBlock(x + dx, y + dy, z + dz))) {
                 this.setBlock(x + dx, y + dy, z + dz, Block.Cobblestone);
             }
         }
@@ -189,7 +249,7 @@ export class World {
         return isWater(this.getBlock(x, y, z));
     }
     isLavaAt(x, y, z) {
-        return this.getBlock(x, y, z) === Block.Lava;
+        return isLava(this.getBlock(x, y, z));
     }
     /** True when nothing blocks the column above, i.e. the spot can see the sky. */
     isSkyExposed(x, y, z) {

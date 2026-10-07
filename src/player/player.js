@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { moveBody } from "../engine/physics.js";
-import { Block, blockContactDamage, isWater } from "../world/blocks.js";
+import { Block, blockContactDamage, isLava, isWater } from "../world/blocks.js";
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.3;
 const EYE_HEIGHT = 1.62;
@@ -158,7 +158,7 @@ export class Player {
         }
         const feet = world.getBlock(Math.floor(this.position.x), Math.floor(this.position.y + 0.4), Math.floor(this.position.z));
         this.inWater = isWater(feet);
-        this.inLava = feet === Block.Lava;
+        this.inLava = isLava(feet);
         const forward = (input.isDown('KeyW') ? 1 : 0) - (input.isDown('KeyS') ? 1 : 0);
         const strafe = (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0);
         const sin = Math.sin(this.yaw);

@@ -23,6 +23,9 @@ export const ITEMS = {
     [Item.RottenFlesh]: { name: 'Rotten Flesh', color: 0x7a6a3a, tool: null, food: { heal: 4, sickness: 8 } },
     [Item.Egg]: { name: 'Egg', color: 0xf2eadb, tool: null, throwable: true },
     [Item.Coal]: { name: 'Coal', color: 0x2c2c33, tool: null, sprite: true },
+    [Item.Gunpowder]: { name: 'Gunpowder', color: 0x9a9a92, tool: null, sprite: true },
+    [Item.Bone]: { name: 'Bone', color: 0xe6e3d4, tool: null, sprite: true },
+    [Item.Arrow]: { name: 'Arrow', color: 0xb8b8b8, tool: null, sprite: true },
 };
 export function isBlockItem(id) {
     return id < 100;
@@ -133,6 +136,46 @@ function drawFoodIcon(ctx, size, id) {
         ctx.fill();
         ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
         ctx.fillRect(s * 0.38, s * 0.38, s * 0.14, s * 0.08);
+        return;
+    }
+    if (id === Item.Gunpowder) {
+        for (const [x, y, r] of [[0.42, 0.6, 0.17], [0.6, 0.56, 0.13], [0.5, 0.42, 0.11]])
+            ellipse(ctx, s * x, s * y, s * r, s * r * 0.85, hex(ITEMS[id].color));
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        for (const [x, y] of [[0.36, 0.66], [0.58, 0.64], [0.48, 0.5], [0.66, 0.52]])
+            ellipse(ctx, s * x, s * y, s * 0.035, s * 0.035, 'rgba(40,40,40,0.8)');
+        return;
+    }
+    if (id === Item.Bone) {
+        const base = hex(ITEMS[id].color);
+        ctx.save();
+        ctx.translate(s * 0.5, s * 0.5);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = base;
+        ctx.fillRect(-s * 0.055, -s * 0.26, s * 0.11, s * 0.52);
+        for (const y of [-0.28, 0.28])
+            for (const x of [-0.08, 0.08])
+                ellipse(ctx, x * s, y * s, s * 0.075, s * 0.075, base);
+        ctx.restore();
+        return;
+    }
+    if (id === Item.Arrow) {
+        ctx.save();
+        ctx.translate(s * 0.5, s * 0.5);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = '#8a6a40';
+        ctx.fillRect(-s * 0.035, -s * 0.22, s * 0.07, s * 0.48);
+        ctx.fillStyle = hex(ITEMS[id].color);
+        ctx.beginPath();
+        ctx.moveTo(0, -s * 0.4);
+        ctx.lineTo(-s * 0.12, -s * 0.18);
+        ctx.lineTo(s * 0.12, -s * 0.18);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#e8e8e8';
+        for (const dy of [0.18, 0.26])
+            ctx.fillRect(-s * 0.13, s * dy, s * 0.26, s * 0.05);
+        ctx.restore();
         return;
     }
     const base = hex(ITEMS[id].color);
