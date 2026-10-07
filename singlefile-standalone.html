@@ -608,6 +608,7 @@ const { DEFAULT_DIFFICULTY, DIFFICULTIES } = __require("src/engine/difficulty.js
 const { Input } = __require("src/engine/input.js");
 const { Sky } = __require("src/engine/sky.js");
 const { Weather } = __require("src/engine/weather.js");
+const { Explosions } = __require("src/engine/explosion.js");
 const { ItemManager } = __require("src/entities/item.js");
 const { MobManager } = __require("src/entities/mobs.js");
 const { CHICKEN } = __require("src/entities/mob.js");
@@ -616,7 +617,7 @@ const { Hand } = __require("src/player/hand.js");
 const { HOTBAR_SIZE, Hotbar } = __require("src/player/hotbar.js");
 const { Inventory } = __require("src/player/inventory.js");
 const { Player } = __require("src/player/player.js");
-const { BLOCKS, Block, isBreakable, isWater } = __require("src/world/blocks.js");
+const { BLOCKS, Block, isBreakable, isLava, isWater } = __require("src/world/blocks.js");
 const { CHUNK_SIZE } = __require("src/world/chunk.js");
 const { SEA_LEVEL, biomeNameAt, terrainHeight } = __require("src/world/terrain.js");
 const { updateFluidAnimation } = __require("src/world/textures.js");
@@ -660,9 +661,12 @@ const world = new World(scene, RENDER_DISTANCE);
 const day = new DayCycle();
 const sky = new Sky(scene);
 const weather = new Weather(scene);
+const explosions = new Explosions(scene);
 const mobs = new MobManager(scene, world);
 const items = new ItemManager(scene, world);
 mobs.onDropItem = (id, x, y, z) => items.spawn(id, x, y, z);
+mobs.onShoot = (origin, direction, damage) => items.throwItem(Item.Arrow, origin, direction, { speed: 26, hurts: damage, lift: 0 });
+mobs.onExplode = (position, power) => explosions.spawn(position, power);
 items.onThrownBreak = (id, position) => {
     if (id === Item.Egg && Math.random() < EGG_HATCH_CHANCE)
         mobs.spawnAt(CHICKEN, position.clone());
@@ -687,7 +691,7 @@ function findSpawn() {
         if (height <= SEA_LEVEL + 1)
             continue;
         const ground = world.getBlock(x, height, z);
-        if (ground === Block.Lava || !world.isSolidAt(x, height, z))
+        if (isLava(ground) || !world.isSolidAt(x, height, z))
             continue;
         if (world.getBlock(x, height + 1, z) !== Block.Air)
             continue;
@@ -757,6 +761,12 @@ input.onKeyPress = (code) => {
             refreshHotbar();
         }
     }
+};
+input.onScroll = (direction) => {
+    if (menu.open)
+        return;
+    hotbar.selected = (hotbar.selected + direction + HOTBAR_SIZE) % HOTBAR_SIZE;
+    refreshHotbar();
 };
 function heldItem() {
     const id = hotbar.item;
@@ -894,10 +904,10 @@ function updateHighlight() {
     if (hit)
         highlight.position.set(hit.block.x + 0.5, hit.block.y + 0.5, hit.block.z + 0.5);
 }
-function updateAtmosphere() {
+function updateAtmosphere(dt) {
     const eye = player.eyePosition;
     const eyeBlock = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z));
-    const inLava = eyeBlock === Block.Lava;
+    const inLava = isLava(eyeBlock);
     const underwater = isWater(eyeBlock);
     const fog = scene.fog;
     const brightness = Math.min(1, day.brightness * weather.lightScale + weather.flash * 0.5);
@@ -929,7 +939,7 @@ function updateAtmosphere() {
     items.setDaylight(brightness);
     hand.setDaylight(brightness);
     sky.setVisible(!underwater && !inLava);
-    sky.update(camera.position, day);
+    sky.update(camera.position, day, dt, weather.overcast);
 }
 function respawn() {
     player.respawn(spawnPoint.x, spawnPoint.y, spawnPoint.z);
@@ -973,6 +983,7 @@ function animate() {
         items.update(dt, player, inventory);
         weather.update(dt, player, world);
     }
+    explosions.update(dt);
     updateMining(dt);
     updateHeldItem();
     hand.update(dt);
@@ -999,7 +1010,7 @@ function animate() {
     player.applyTo(camera);
     world.update(player.position);
     updateHighlight();
-    updateAtmosphere();
+    updateAtmosphere(dt);
     debugTimer += dt;
     if (debugTimer > 0.25) {
         debugTimer = 0;
@@ -21304,8 +21315,10 @@ class Input {
     locked = false;
     sprintLatch = false;
     lastForwardTap = 0;
+    wheelAccumulator = 0;
     onMouseDown = null;
     onKeyPress = null;
+    onScroll = null;
     onLockChange = null;
     element;
     constructor(element) {
@@ -21358,6 +21371,23 @@ class Input {
         });
         window.addEventListener('mouseup', (event) => this.buttons.delete(event.button));
         this.element.addEventListener('contextmenu', (event) => event.preventDefault());
+        window.addEventListener('wheel', (event) => {
+            if (!this.locked)
+                return;
+            event.preventDefault();
+            // Normalised so a trackpad's many small deltas step as one notch.
+            const notch = event.deltaMode === 0 ? 100 : event.deltaMode === 1 ? 3 : 1;
+            this.wheelAccumulator += event.deltaY / notch;
+            // Epsilon, because summing fractions of a notch lands just short of 1.
+            while (this.wheelAccumulator >= 1 - 1e-6) {
+                this.wheelAccumulator -= 1;
+                this.onScroll?.(1);
+            }
+            while (this.wheelAccumulator <= -1 + 1e-6) {
+                this.wheelAccumulator += 1;
+                this.onScroll?.(-1);
+            }
+        }, { passive: false });
     }
     isDown(code) {
         return this.keys.has(code);
@@ -21369,6 +21399,7 @@ class Input {
     releaseAll() {
         this.keys.clear();
         this.sprintLatch = false;
+        this.wheelAccumulator = 0;
     }
     isMouseDown(button) {
         return this.buttons.has(button) || (button === 0 && this.attackKeyDown);
@@ -21401,6 +21432,17 @@ const RADIUS = 400;
 const SUN_SIZE = 58;
 const MOON_SIZE = 46;
 const STAR_COUNT = 900;
+const CLOUD_HEIGHT = 124;
+/** Width of one cloud block and how thick the slab is, both in world blocks. */
+const CLOUD_CELL = 12;
+const CLOUD_THICKNESS = 4;
+const CLOUD_CELLS = 24;
+/** One seamless tile of the mask, repeated across a CLOUD_GRID square. */
+const CLOUD_TILE = CLOUD_CELL * CLOUD_CELLS;
+const CLOUD_GRID = 7;
+const CLOUD_FADE_START = 380;
+const CLOUD_FADE_END = 820;
+const CLOUD_DRIFT = 0.7;
 /** Tilts the daily arc so the sun does not rise exactly along an axis. */
 const SKY_TILT = 0.4;
 function canvasTexture(size, draw) {
@@ -21486,12 +21528,108 @@ function celestialBody(texture, size, facing) {
     mesh.rotation.y = (-facing * Math.PI) / 2;
     return mesh;
 }
+/** Grows random seeds into blobs with wrapping neighbour counts, so the tile repeats seamlessly. */
+function cloudMask() {
+    let cells = Array.from({ length: CLOUD_CELLS * CLOUD_CELLS }, () => Math.random() < 0.37);
+    const at = (x, y) => cells[((y + CLOUD_CELLS) % CLOUD_CELLS) * CLOUD_CELLS + ((x + CLOUD_CELLS) % CLOUD_CELLS)];
+    const neighbours = (x, y) => {
+        let filled = 0;
+        for (let dy = -1; dy <= 1; dy++)
+            for (let dx = -1; dx <= 1; dx++)
+                if ((dx || dy) && at(x + dx, y + dy))
+                    filled++;
+        return filled;
+    };
+    for (let pass = 0; pass < 2; pass++) {
+        const next = cells.slice();
+        for (let y = 0; y < CLOUD_CELLS; y++) {
+            for (let x = 0; x < CLOUD_CELLS; x++) {
+                const filled = neighbours(x, y);
+                next[y * CLOUD_CELLS + x] = filled > 4 || (at(x, y) && filled > 2);
+            }
+        }
+        cells = next;
+    }
+    // Smoothing alone merges everything into one sheet, so one erosion pass breaks it back apart.
+    const eroded = cells.slice();
+    for (let y = 0; y < CLOUD_CELLS; y++)
+        for (let x = 0; x < CLOUD_CELLS; x++)
+            eroded[y * CLOUD_CELLS + x] = at(x, y) && neighbours(x, y) >= 5;
+    return eroded;
+}
+/** Face shades, so the slab sides and undersides read as solid blocks rather than flat paper. */
+const CLOUD_SHADE = { top: 1, bottom: 0.72, x: 0.84, z: 0.93 };
+/**
+ * Builds one static mesh of cloud blocks covering a wide disc. Each filled mask cell becomes a
+ * box CLOUD_CELL wide and CLOUD_THICKNESS tall, and only faces with no neighbour are emitted.
+ */
+function cloudLayer() {
+    const cells = cloudMask();
+    const filled = (cx, cz) => cells[((cz + CLOUD_CELLS) % CLOUD_CELLS) * CLOUD_CELLS + ((cx + CLOUD_CELLS) % CLOUD_CELLS)];
+    const positions = [];
+    const colors = [];
+    const half = (CLOUD_GRID - 1) / 2;
+    const y0 = -CLOUD_THICKNESS / 2;
+    const y1 = CLOUD_THICKNESS / 2;
+    const vertex = (x, y, z, shade) => {
+        const alpha = 1 - THREE.MathUtils.smoothstep(Math.hypot(x, z), CLOUD_FADE_START, CLOUD_FADE_END);
+        positions.push(x, y, z);
+        colors.push(shade, shade, shade, alpha);
+    };
+    const quad = (corners, shade) => {
+        for (const i of [0, 1, 2, 0, 2, 3])
+            vertex(corners[i][0], corners[i][1], corners[i][2], shade);
+    };
+    for (let gz = 0; gz < CLOUD_GRID; gz++) {
+        for (let gx = 0; gx < CLOUD_GRID; gx++) {
+            const ox = (gx - half) * CLOUD_TILE;
+            const oz = (gz - half) * CLOUD_TILE;
+            for (let cz = 0; cz < CLOUD_CELLS; cz++) {
+                for (let cx = 0; cx < CLOUD_CELLS; cx++) {
+                    if (!filled(cx, cz))
+                        continue;
+                    const xa = ox + cx * CLOUD_CELL;
+                    const xb = xa + CLOUD_CELL;
+                    const za = oz + cz * CLOUD_CELL;
+                    const zb = za + CLOUD_CELL;
+                    // Nothing out past the fade ring would be visible, so it is never built.
+                    if (Math.hypot(xa + CLOUD_CELL / 2, za + CLOUD_CELL / 2) > CLOUD_FADE_END)
+                        continue;
+                    quad([[xa, y1, zb], [xb, y1, zb], [xb, y1, za], [xa, y1, za]], CLOUD_SHADE.top);
+                    quad([[xa, y0, za], [xb, y0, za], [xb, y0, zb], [xa, y0, zb]], CLOUD_SHADE.bottom);
+                    if (!filled(cx + 1, cz))
+                        quad([[xb, y0, zb], [xb, y0, za], [xb, y1, za], [xb, y1, zb]], CLOUD_SHADE.x);
+                    if (!filled(cx - 1, cz))
+                        quad([[xa, y0, za], [xa, y0, zb], [xa, y1, zb], [xa, y1, za]], CLOUD_SHADE.x);
+                    if (!filled(cx, cz + 1))
+                        quad([[xa, y0, zb], [xb, y0, zb], [xb, y1, zb], [xa, y1, zb]], CLOUD_SHADE.z);
+                    if (!filled(cx, cz - 1))
+                        quad([[xb, y0, za], [xa, y0, za], [xa, y1, za], [xb, y1, za]], CLOUD_SHADE.z);
+                }
+            }
+        }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 4));
+    const material = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.9,
+        // Faded-out blocks must not write depth and silently occlude the sky behind them.
+        alphaTest: 0.02,
+        fog: false,
+    });
+    return new THREE.Mesh(geometry, material);
+}
 /** Sun, moon and stars riding a dome that is re-centred on the camera every frame. */
 class Sky {
     group = new THREE.Group();
     sun = celestialBody(sunTexture(), SUN_SIZE, 1);
     moon = celestialBody(moonTexture(), MOON_SIZE, -1);
     stars = starField();
+    clouds = cloudLayer();
+    drift = 0;
     constructor(scene) {
         this.group.add(this.sun, this.moon, this.stars);
         this.group.renderOrder = -1;
@@ -21499,11 +21637,13 @@ class Sky {
         this.moon.renderOrder = -1;
         this.stars.renderOrder = -2;
         scene.add(this.group);
+        scene.add(this.clouds);
     }
     setVisible(visible) {
         this.group.visible = visible;
+        this.clouds.visible = visible;
     }
-    update(cameraPosition, day) {
+    update(cameraPosition, day, dt = 0, overcast = 0) {
         this.group.position.copy(cameraPosition);
         const angle = (day.time - 0.25) * Math.PI * 2;
         this.group.rotation.set(0, SKY_TILT, angle);
@@ -21511,6 +21651,18 @@ class Sky {
         sunMaterial(this.sun).opacity = horizonFade(sunElevation);
         sunMaterial(this.moon).opacity = horizonFade(-sunElevation) * 0.95;
         this.stars.material.opacity = 1 - day.daylight;
+        this.updateClouds(cameraPosition, day, dt, overcast);
+    }
+    updateClouds(cameraPosition, day, dt, overcast) {
+        this.drift += dt * CLOUD_DRIFT;
+        // Snapping to whole tiles keeps the repeating pattern locked to the world as the player moves.
+        const x = this.drift + Math.round((cameraPosition.x - this.drift) / CLOUD_TILE) * CLOUD_TILE;
+        const z = Math.round(cameraPosition.z / CLOUD_TILE) * CLOUD_TILE;
+        this.clouds.position.set(x, CLOUD_HEIGHT, z);
+        const material = sunMaterial(this.clouds);
+        const shade = 1 - overcast * 0.4;
+        material.color.setScalar(Math.max(day.brightness, 0.12) * shade);
+        material.opacity = 0.9 + overcast * 0.1;
     }
 }
 function sunMaterial(mesh) {
@@ -21750,6 +21902,102 @@ class Weather {
 
 __exports["Weather"] = Weather;
 },
+"src/engine/explosion.js": function (__exports, __require) {
+'use strict';
+const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
+const PUFFS = 22;
+const POOL = 96;
+const PUFF_LIFETIME = 0.9;
+const FLASH_LIFETIME = 0.3;
+/** Per-second velocity retention, so puffs stall quickly instead of flying off. */
+const DRAG = 0.02;
+const RISE = 0.9;
+function puffTexture() {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx)
+        throw new Error('2D canvas context unavailable');
+    const glow = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    glow.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    glow.addColorStop(0.45, 'rgba(255, 255, 255, 0.92)');
+    glow.addColorStop(0.75, 'rgba(236, 236, 236, 0.45)');
+    glow.addColorStop(1, 'rgba(220, 220, 220, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, size, size);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+}
+/** A pooled burst of billboard puffs that balloon outwards and fade, as a blast leaves behind. */
+class Explosions {
+    pool = [];
+    live = [];
+    constructor(scene) {
+        const map = puffTexture();
+        for (let i = 0; i < POOL; i++) {
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+                map,
+                transparent: true,
+                depthWrite: false,
+                fog: false,
+            }));
+            sprite.visible = false;
+            scene.add(sprite);
+            this.pool.push(sprite);
+        }
+    }
+    take() {
+        return this.pool.pop() ?? null;
+    }
+    add(sprite, position, velocity, size, lifetime, shade, grow) {
+        sprite.visible = true;
+        sprite.position.copy(position);
+        sprite.material.opacity = 1;
+        sprite.material.color.setScalar(shade);
+        sprite.scale.setScalar(size);
+        this.live.push({ sprite, velocity, size, lifetime, grow, age: 0 });
+    }
+    spawn(position, power) {
+        const flash = this.take();
+        if (flash)
+            this.add(flash, position, new THREE.Vector3(), power * 0.55, FLASH_LIFETIME, 1, 1.3);
+        const offset = new THREE.Vector3();
+        for (let i = 0; i < PUFFS; i++) {
+            const sprite = this.take();
+            if (!sprite)
+                break;
+            offset.randomDirection().multiplyScalar(power * (0.2 + Math.random() * 0.6));
+            const velocity = offset.clone().multiplyScalar(1.1 + Math.random() * 1.2);
+            velocity.y += 0.8;
+            this.add(sprite, position.clone().add(offset), velocity, power * (0.13 + Math.random() * 0.17), PUFF_LIFETIME * (0.7 + Math.random() * 0.6), 0.72 + Math.random() * 0.28, 1.9);
+        }
+    }
+    update(dt) {
+        for (let i = this.live.length - 1; i >= 0; i--) {
+            const puff = this.live[i];
+            puff.age += dt;
+            const progress = puff.age / puff.lifetime;
+            if (progress >= 1) {
+                puff.sprite.visible = false;
+                this.pool.push(puff.sprite);
+                this.live.splice(i, 1);
+                continue;
+            }
+            puff.velocity.multiplyScalar(Math.pow(DRAG, dt));
+            puff.velocity.y += RISE * dt;
+            puff.sprite.position.addScaledVector(puff.velocity, dt);
+            puff.sprite.scale.setScalar(puff.size * (1 + progress * puff.grow));
+            // Held solid for the first half, so the blast reads before it dissipates.
+            puff.sprite.material.opacity = Math.min(1, (1 - progress) * 2);
+        }
+    }
+}
+
+__exports["Explosions"] = Explosions;
+},
 "src/entities/item.js": function (__exports, __require) {
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
@@ -21802,6 +22050,7 @@ class ItemDrop {
     age = 0;
     thrown = false;
     broke = false;
+    hurts = 0;
     spinOffset = Math.random() * Math.PI * 2;
     constructor(blockId, position, material, geometry) {
         this.blockId = blockId;
@@ -21813,7 +22062,7 @@ class ItemDrop {
     update(dt, world, player) {
         this.age += dt;
         if (this.thrown)
-            return this.updateThrown(dt, world);
+            return this.updateThrown(dt, world, player);
         const target = player.position.clone();
         target.y += 0.9;
         const toPlayer = target.sub(this.position);
@@ -21838,10 +22087,18 @@ class ItemDrop {
         this.mesh.rotation.y = this.spinOffset + this.age * 1.8;
         return false;
     }
-    updateThrown(dt, world) {
+    updateThrown(dt, world, player) {
         const before = this.velocity.clone();
         this.velocity.y = Math.max(this.velocity.y + GRAVITY * dt, -30);
         moveBody(world, this, dt);
+        if (this.hurts > 0) {
+            const chest = player.position.clone();
+            chest.y += 1;
+            if (chest.distanceTo(this.position) < 0.7) {
+                player.damage(this.hurts);
+                this.broke = true;
+            }
+        }
         // moveBody zeroes an axis on contact, which is how the egg knows it hit something.
         const stopped = (before.x !== 0 && this.velocity.x === 0) ||
             (before.z !== 0 && this.velocity.z === 0) ||
@@ -21906,13 +22163,14 @@ class ItemManager {
         this.create(itemId, x, y, z);
     }
     /** Hurls an item forward; it shatters on the first thing it touches. */
-    throwItem(itemId, origin, direction) {
+    throwItem(itemId, origin, direction, { speed = THROW_SPEED, hurts = 0, lift = 2 } = {}) {
         if (this.drops.length >= MAX_DROPS)
             return;
         const drop = this.create(itemId, origin.x, origin.y, origin.z);
         drop.thrown = true;
-        drop.velocity.copy(direction).normalize().multiplyScalar(THROW_SPEED);
-        drop.velocity.y += 2;
+        drop.hurts = hurts;
+        drop.velocity.copy(direction).normalize().multiplyScalar(speed);
+        drop.velocity.y += lift;
     }
     update(dt, player, inventory) {
         for (let i = this.drops.length - 1; i >= 0; i--) {
@@ -21941,7 +22199,7 @@ const { DEFAULT_DIFFICULTY, DIFFICULTIES } = __require("src/engine/difficulty.js
 const { Item } = __require("src/items/ids.js");
 const { Block } = __require("src/world/blocks.js");
 const { CHUNK_HEIGHT } = __require("src/world/chunk.js");
-const { ANIMAL_TYPES, Mob, SPIDER, ZOMBIE } = __require("src/entities/mob.js");
+const { ANIMAL_TYPES, CREEPER, Mob, SKELETON, SPIDER, ZOMBIE } = __require("src/entities/mob.js");
 const SPAWN_ATTEMPTS = 12;
 const MIN_SPAWN_DISTANCE = 14;
 const MAX_SPAWN_DISTANCE = 30;
@@ -21951,6 +22209,22 @@ const MAX_ANIMALS = 10;
 const ANIMAL_SPAWN_INTERVAL = 7;
 /** Animals only settle on ground they could graze on. */
 const GRAZEABLE = new Set([Block.Grass, Block.Snow, Block.Sand]);
+/** Cumulative spawn weights for the night-time hostile pool. */
+const HOSTILE_POOL = [
+    { type: ZOMBIE, weight: 0.4 },
+    { type: SKELETON, weight: 0.25 },
+    { type: CREEPER, weight: 0.2 },
+    { type: SPIDER, weight: 0.15 },
+];
+function pickHostile() {
+    let roll = Math.random();
+    for (const entry of HOSTILE_POOL) {
+        roll -= entry.weight;
+        if (roll <= 0)
+            return entry.type;
+    }
+    return ZOMBIE;
+}
 class MobManager {
     mobs = [];
     scene;
@@ -21961,6 +22235,8 @@ class MobManager {
     spawnTimer = 0;
     animalTimer = 0;
     onDropItem = null;
+    onShoot = null;
+    onExplode = null;
     constructor(scene, world) {
         this.scene = scene;
         this.world = world;
@@ -22018,6 +22294,18 @@ class MobManager {
                 mob.pendingEgg = false;
                 this.onDropItem?.(Item.Egg, mob.position.x, mob.position.y + 0.3, mob.position.z);
             }
+            if (mob.pendingShot) {
+                const shot = mob.pendingShot;
+                mob.pendingShot = null;
+                const muzzle = new THREE.Vector3(mob.position.x, mob.position.y + mob.height * 0.8, mob.position.z);
+                muzzle.addScaledVector(shot.direction, mob.radius + 0.4);
+                this.onShoot?.(muzzle, shot.direction, shot.damage);
+            }
+            if (mob.exploded) {
+                const blast = mob.position.clone();
+                blast.y += mob.height * 0.5;
+                this.onExplode?.(blast, mob.type.fuse.power);
+            }
             if (mob.dead) {
                 this.dropLoot(mob);
                 this.remove(i);
@@ -22025,15 +22313,23 @@ class MobManager {
         }
     }
     dropLoot(mob) {
-        const drop = mob.type.drop;
-        if (drop === null || drop === undefined)
+        // A creeper that detonated is consumed by the blast and leaves nothing.
+        if (mob.exploded)
             return;
-        this.onDropItem?.(drop, mob.position.x, mob.position.y + 0.3, mob.position.z);
+        for (const drop of mob.type.drops ?? [mob.type.drop]) {
+            if (drop === null || drop === undefined)
+                continue;
+            const count = mob.type.dropRange ? Math.floor(Math.random() * 3) : 1;
+            for (let i = 0; i < count; i++)
+                this.onDropItem?.(drop, mob.position.x, mob.position.y + 0.3, mob.position.z);
+        }
     }
     /** Returns the closest mob hit by the ray, along with the hit distance. */
     raycast(origin, direction, maxDistance) {
         let closest = null;
         for (const mob of this.mobs) {
+            if (mob.dying)
+                continue;
             const min = new THREE.Vector3(mob.position.x - mob.radius, mob.position.y, mob.position.z - mob.radius);
             const max = new THREE.Vector3(mob.position.x + mob.radius, mob.position.y + mob.height, mob.position.z + mob.radius);
             const distance = rayBoxDistance(origin, direction, min, max);
@@ -22064,7 +22360,7 @@ class MobManager {
             const radius = MIN_SPAWN_DISTANCE + Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
             const x = Math.floor(player.position.x + Math.cos(angle) * radius);
             const z = Math.floor(player.position.z + Math.sin(angle) * radius);
-            const type = Math.random() < 0.65 ? ZOMBIE : SPIDER;
+            const type = pickHostile();
             const top = Math.min(CHUNK_HEIGHT - 3, Math.floor(player.position.y) + 10);
             const bottom = Math.max(1, Math.floor(player.position.y) - 16);
             for (let y = top; y >= bottom; y--) {
@@ -22152,7 +22448,7 @@ __exports["MobManager"] = MobManager;
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
 const { buildBoxGeometry } = __require("src/engine/boxmodel.js");
 const { moveBody } = __require("src/engine/physics.js");
-const { Block, isWater } = __require("src/world/blocks.js");
+const { Block, isLava, isWater } = __require("src/world/blocks.js");
 const { Item } = __require("src/items/ids.js");
 const { WALK_SPEED } = __require("src/player/player.js");
 const GRAVITY = -28;
@@ -22171,6 +22467,10 @@ const SHELTER_RADII = [3, 6, 10];
 const BURN_FLASH_INTERVAL = 0.5;
 /** How long a scorched mob lurks in cover before it dares chase again. */
 const SUN_SHY_DURATION = 8;
+const ARROW_SPEED = 26;
+/** Seconds to topple onto its side, and how long the body lingers before it is cleared away. */
+const DEATH_TILT_TIME = 0.4;
+const DEATH_DURATION = 0.8;
 const EGG_MIN_INTERVAL = 40;
 const EGG_MAX_INTERVAL = 100;
 const SUNLIGHT_BURN_DPS = 4;
@@ -22238,6 +22538,71 @@ const SPIDER = {
     ],
 };
 const MOB_TYPES = [ZOMBIE, SPIDER];
+const CREEPER_BODY = 0x58a447;
+const CREEPER_DARK = 0x0f1a10;
+const CREEPER = {
+    id: 'creeper',
+    name: 'Creeper',
+    health: 20,
+    damage: 0,
+    speed: 2.6,
+    radius: 0.3,
+    height: 1.7,
+    jumpSpeed: 8.2,
+    burnsInSunlight: false,
+    alwaysHostile: true,
+    passive: false,
+    drop: Item.Gunpowder,
+    drops: [Item.Gunpowder],
+    dropRange: true,
+    // Stops at 3 blocks, swells for 1.5s, and aborts if the target gets 7 away.
+    fuse: { trigger: 3, seconds: 1.5, cancel: 7, power: 3, maxDamage: 22 },
+    parts: [
+        { size: [0.25, 0.37, 0.25], offset: [-0.12, 0.19, -0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.25, 0.37, 0.25], offset: [0.12, 0.19, -0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.25, 0.37, 0.25], offset: [-0.12, 0.19, 0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.25, 0.37, 0.25], offset: [0.12, 0.19, 0.19], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.5, 0.75, 0.25], offset: [0, 0.75, 0], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.5, 0.5, 0.5], offset: [0, 1.37, 0], color: CREEPER_BODY, mottle: 0.34 },
+        { size: [0.13, 0.13, 0.03], offset: [-0.13, 1.47, -0.26], color: CREEPER_DARK },
+        { size: [0.13, 0.13, 0.03], offset: [0.13, 1.47, -0.26], color: CREEPER_DARK },
+        { size: [0.13, 0.22, 0.03], offset: [0, 1.3, -0.26], color: CREEPER_DARK },
+        { size: [0.28, 0.1, 0.03], offset: [0, 1.36, -0.26], color: CREEPER_DARK },
+    ],
+};
+const BONE = 0xd8d6cb;
+const BOW_WOOD = 0x6b4a26;
+const SKELETON = {
+    id: 'skeleton',
+    name: 'Skeleton',
+    health: 20,
+    damage: 0,
+    speed: 2.6,
+    radius: 0.3,
+    height: 1.99,
+    jumpSpeed: 8.2,
+    burnsInSunlight: true,
+    alwaysHostile: true,
+    passive: false,
+    drop: Item.Bone,
+    drops: [Item.Bone, Item.Arrow],
+    dropRange: true,
+    // Fires from 15 blocks and backs off if crowded, as in Java Edition.
+    bow: { range: 15, cooldown: 2, retreat: 4, damage: [3, 5] },
+    parts: [
+        { size: [0.13, 0.75, 0.13], offset: [-0.1, 0.37, 0], color: BONE },
+        { size: [0.13, 0.75, 0.13], offset: [0.1, 0.37, 0], color: BONE },
+        { size: [0.4, 0.6, 0.2], offset: [0, 1.05, 0], color: BONE },
+        { size: [0.13, 0.13, 0.5], offset: [-0.26, 1.28, -0.2], color: BONE },
+        { size: [0.13, 0.13, 0.5], offset: [0.26, 1.28, -0.2], color: BONE },
+        { size: [0.44, 0.44, 0.44], offset: [0, 1.6, 0], color: BONE },
+        { size: [0.09, 0.09, 0.03], offset: [-0.1, 1.64, -0.23], color: 0x101010 },
+        { size: [0.09, 0.09, 0.03], offset: [0.1, 1.64, -0.23], color: 0x101010 },
+        { size: [0.05, 0.62, 0.05], offset: [-0.3, 1.28, -0.44], color: BOW_WOOD },
+        { size: [0.05, 0.08, 0.1], offset: [-0.3, 1.58, -0.4], color: BOW_WOOD },
+        { size: [0.05, 0.08, 0.1], offset: [-0.3, 0.98, -0.4], color: BOW_WOOD },
+    ],
+};
 const CHICKEN_BODY = 0xe9e9e4;
 const CHICKEN_BEAK = 0xe0a62e;
 const CHICKEN = {
@@ -22383,6 +22748,13 @@ class Mob {
     shelterPhase = Math.random() * Math.PI * 2;
     burnFlash = 0;
     sunShyTimer = 0;
+    fuseTimer = 0;
+    shootTimer = 0;
+    strafe = Math.random() < 0.5 ? 1 : -1;
+    pendingShot = null;
+    exploded = false;
+    dying = false;
+    deathTimer = 0;
     eggTimer = EGG_MIN_INTERVAL + Math.random() * (EGG_MAX_INTERVAL - EGG_MIN_INTERVAL);
     pendingEgg = false;
     material;
@@ -22402,6 +22774,8 @@ class Mob {
         return this.height * 0.85;
     }
     hurt(amount, knockback) {
+        if (this.dying)
+            return;
         this.health -= amount;
         this.hurtTimer = 0.25;
         this.velocity.x += knockback.x * 6;
@@ -22414,23 +22788,42 @@ class Mob {
         if (this.onGround)
             this.velocity.y = 5;
         if (this.health <= 0)
+            this.die();
+    }
+    die() {
+        this.dying = true;
+        this.deathTimer = 0;
+        this.velocity.set(0, 0, 0);
+    }
+    /** Tips the body onto its side and holds it there, so a kill reads before the corpse vanishes. */
+    updateDeath(dt, world) {
+        this.deathTimer += dt;
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+        moveBody(world, this, dt);
+        const roll = Math.min(1, this.deathTimer / DEATH_TILT_TIME) * (Math.PI / 2);
+        this.mesh.position.copy(this.position);
+        this.mesh.rotation.set(0, this.yaw, roll);
+        this.mesh.material = this.hurtMaterial;
+        this.mesh.scale.setScalar(1);
+        if (this.deathTimer >= DEATH_DURATION)
             this.dead = true;
     }
     update(dt, world, player, dark, daylight, difficulty) {
         this.attackTimer = Math.max(0, this.attackTimer - dt);
         this.hurtTimer = Math.max(0, this.hurtTimer - dt);
+        if (this.dying) {
+            this.updateDeath(dt, world);
+            return;
+        }
         const scorching = this.type.burnsInSunlight && daylight &&
             world.isSkyExposed(Math.floor(this.position.x), Math.floor(this.position.y), Math.floor(this.position.z));
         if (scorching) {
             this.health -= SUNLIGHT_BURN_DPS * dt;
             this.sunShyTimer = SUN_SHY_DURATION;
-            this.burnFlash -= dt;
-            if (this.burnFlash <= 0) {
-                this.burnFlash = BURN_FLASH_INTERVAL;
-                this.hurtTimer = 0.15;
-            }
+            this.pulseBurn(dt);
             if (this.health <= 0) {
-                this.dead = true;
+                this.die();
                 return;
             }
             this.updateShelterSearch(dt, world);
@@ -22451,9 +22844,21 @@ class Mob {
         const sheltering = this.shelterX !== 0 || this.shelterZ !== 0;
         // Fresh out of the sun: hold the shade rather than stepping straight back into it.
         const cowering = !sheltering && this.sunShyTimer > 0;
+        const priming = this.updateFuse(dt, distance, chasing, world, player, difficulty);
+        const aiming = this.updateBow(dt, distance, chasing, toPlayer, difficulty);
         let dirX = 0;
         let dirZ = 0;
-        if (sheltering) {
+        if (this.dead)
+            return;
+        if (priming) {
+            dirX = 0;
+            dirZ = 0;
+        }
+        else if (aiming) {
+            dirX = aiming.x;
+            dirZ = aiming.z;
+        }
+        else if (sheltering) {
             dirX = this.shelterX;
             dirZ = this.shelterZ;
         }
@@ -22497,14 +22902,15 @@ class Mob {
         this.velocity.x = dirX * speed;
         this.velocity.z = dirZ * speed;
         const inFluid = world.getBlock(Math.floor(this.position.x), Math.floor(this.position.y + 0.2), Math.floor(this.position.z));
-        if (inFluid === Block.Lava) {
+        if (isLava(inFluid)) {
             this.health -= LAVA_DPS * dt;
+            this.pulseBurn(dt);
             if (this.health <= 0) {
-                this.dead = true;
+                this.die();
                 return;
             }
         }
-        if (isWater(inFluid) || inFluid === Block.Lava) {
+        if (isWater(inFluid) || isLava(inFluid)) {
             this.velocity.y = SWIM_RISE;
         }
         else {
@@ -22532,8 +22938,97 @@ class Mob {
         this.mesh.position.set(this.position.x, this.position.y + bob, this.position.z);
         this.mesh.rotation.y = this.yaw;
         const hurting = this.hurtTimer > 0;
-        this.mesh.material = hurting ? this.hurtMaterial : this.material;
-        this.mesh.scale.setScalar(hurting ? 1.15 : 1);
+        // A priming creeper owns its scale, so the hit pop must not overwrite the swell.
+        const swelling = this.fuseTimer > 0;
+        this.mesh.material = hurting || swelling ? this.hurtMaterial : this.material;
+        if (!swelling)
+            this.mesh.scale.setScalar(hurting ? 1.15 : 1);
+    }
+    /** Reuses the hit flash so steady burn damage is visible, not silent. */
+    pulseBurn(dt) {
+        this.burnFlash -= dt;
+        if (this.burnFlash <= 0) {
+            this.burnFlash = BURN_FLASH_INTERVAL;
+            this.hurtTimer = 0.15;
+        }
+    }
+    /** Swells while the player stays close, then detonates. Returns true while priming. */
+    updateFuse(dt, distance, chasing, world, player, difficulty) {
+        const fuse = this.type.fuse;
+        if (!fuse)
+            return false;
+        if (!chasing || distance > fuse.cancel) {
+            this.fuseTimer = 0;
+            this.mesh.scale.setScalar(1);
+            return false;
+        }
+        if (this.fuseTimer === 0 && distance > fuse.trigger)
+            return false;
+        this.fuseTimer += dt;
+        const swell = this.fuseTimer / fuse.seconds;
+        this.mesh.scale.setScalar(1 + swell * 0.4);
+        if (this.fuseTimer < fuse.seconds)
+            return true;
+        this.explode(world, player, difficulty);
+        return true;
+    }
+    explode(world, player, difficulty) {
+        const fuse = this.type.fuse;
+        const radius = fuse.power * 1.33;
+        const origin = this.position.clone();
+        origin.y += this.height * 0.5;
+        const reach = origin.distanceTo(player.eyePosition);
+        if (reach < radius) {
+            const falloff = 1 - reach / radius;
+            player.hurt(fuse.maxDamage * falloff * difficulty.damageMultiplier);
+            const push = player.position.clone().sub(this.position).setY(0).normalize();
+            player.applyKnockback(push.x * 9, push.z * 9, 6);
+        }
+        const cx = Math.floor(origin.x);
+        const cy = Math.floor(origin.y);
+        const cz = Math.floor(origin.z);
+        const blocks = Math.floor(radius);
+        for (let dy = -blocks; dy <= blocks; dy++) {
+            for (let dz = -blocks; dz <= blocks; dz++) {
+                for (let dx = -blocks; dx <= blocks; dx++) {
+                    if (dx * dx + dy * dy + dz * dz > blocks * blocks)
+                        continue;
+                    const id = world.getBlock(cx + dx, cy + dy, cz + dz);
+                    if (id === Block.Air || id === Block.Bedrock)
+                        continue;
+                    world.setBlock(cx + dx, cy + dy, cz + dz, Block.Air);
+                }
+            }
+        }
+        this.exploded = true;
+        this.dead = true;
+    }
+    /** Keeps bow range and fires on cooldown. Returns a strafe direction while engaged. */
+    updateBow(dt, distance, chasing, toPlayer, difficulty) {
+        const bow = this.type.bow;
+        if (!bow)
+            return null;
+        this.shootTimer = Math.max(0, this.shootTimer - dt);
+        if (!chasing || distance > bow.range)
+            return null;
+        if (this.shootTimer === 0) {
+            this.shootTimer = bow.cooldown * (2 - difficulty.speedMultiplier);
+            const aim = toPlayer.clone().normalize();
+            // Lift the shot slightly so gravity does not drop it short.
+            aim.y += 0.1;
+            const [low, high] = bow.damage;
+            this.pendingShot = {
+                direction: aim.normalize(),
+                damage: (low + Math.random() * (high - low)) * difficulty.damageMultiplier,
+            };
+        }
+        const flat = Math.hypot(toPlayer.x, toPlayer.z) || 1;
+        const towardX = toPlayer.x / flat;
+        const towardZ = toPlayer.z / flat;
+        // Back off when crowded, otherwise circle the target.
+        if (distance < bow.retreat)
+            return { x: -towardX, z: -towardZ };
+        return { x: -towardZ * this.strafe, z: towardX * this.strafe };
     }
     /** Looks for open ground with something overhead, so burning mobs make for cover. */
     updateShelterSearch(dt, world) {
@@ -22585,6 +23080,8 @@ class Mob {
 __exports["ZOMBIE"] = ZOMBIE;
 __exports["SPIDER"] = SPIDER;
 __exports["MOB_TYPES"] = MOB_TYPES;
+__exports["CREEPER"] = CREEPER;
+__exports["SKELETON"] = SKELETON;
 __exports["CHICKEN"] = CHICKEN;
 __exports["PIG"] = PIG;
 __exports["SHEEP"] = SHEEP;
@@ -22620,6 +23117,9 @@ const ITEMS = {
     [Item.RottenFlesh]: { name: 'Rotten Flesh', color: 0x7a6a3a, tool: null, food: { heal: 4, sickness: 8 } },
     [Item.Egg]: { name: 'Egg', color: 0xf2eadb, tool: null, throwable: true },
     [Item.Coal]: { name: 'Coal', color: 0x2c2c33, tool: null, sprite: true },
+    [Item.Gunpowder]: { name: 'Gunpowder', color: 0x9a9a92, tool: null, sprite: true },
+    [Item.Bone]: { name: 'Bone', color: 0xe6e3d4, tool: null, sprite: true },
+    [Item.Arrow]: { name: 'Arrow', color: 0xb8b8b8, tool: null, sprite: true },
 };
 function isBlockItem(id) {
     return id < 100;
@@ -22730,6 +23230,46 @@ function drawFoodIcon(ctx, size, id) {
         ctx.fill();
         ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
         ctx.fillRect(s * 0.38, s * 0.38, s * 0.14, s * 0.08);
+        return;
+    }
+    if (id === Item.Gunpowder) {
+        for (const [x, y, r] of [[0.42, 0.6, 0.17], [0.6, 0.56, 0.13], [0.5, 0.42, 0.11]])
+            ellipse(ctx, s * x, s * y, s * r, s * r * 0.85, hex(ITEMS[id].color));
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        for (const [x, y] of [[0.36, 0.66], [0.58, 0.64], [0.48, 0.5], [0.66, 0.52]])
+            ellipse(ctx, s * x, s * y, s * 0.035, s * 0.035, 'rgba(40,40,40,0.8)');
+        return;
+    }
+    if (id === Item.Bone) {
+        const base = hex(ITEMS[id].color);
+        ctx.save();
+        ctx.translate(s * 0.5, s * 0.5);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = base;
+        ctx.fillRect(-s * 0.055, -s * 0.26, s * 0.11, s * 0.52);
+        for (const y of [-0.28, 0.28])
+            for (const x of [-0.08, 0.08])
+                ellipse(ctx, x * s, y * s, s * 0.075, s * 0.075, base);
+        ctx.restore();
+        return;
+    }
+    if (id === Item.Arrow) {
+        ctx.save();
+        ctx.translate(s * 0.5, s * 0.5);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = '#8a6a40';
+        ctx.fillRect(-s * 0.035, -s * 0.22, s * 0.07, s * 0.48);
+        ctx.fillStyle = hex(ITEMS[id].color);
+        ctx.beginPath();
+        ctx.moveTo(0, -s * 0.4);
+        ctx.lineTo(-s * 0.12, -s * 0.18);
+        ctx.lineTo(s * 0.12, -s * 0.18);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#e8e8e8';
+        for (const dy of [0.18, 0.26])
+            ctx.fillRect(-s * 0.13, s * dy, s * 0.26, s * 0.05);
+        ctx.restore();
         return;
     }
     const base = hex(ITEMS[id].color);
@@ -22980,7 +23520,7 @@ __exports["Inventory"] = Inventory;
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
 const { moveBody } = __require("src/engine/physics.js");
-const { Block, blockContactDamage, isWater } = __require("src/world/blocks.js");
+const { Block, blockContactDamage, isLava, isWater } = __require("src/world/blocks.js");
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.3;
 const EYE_HEIGHT = 1.62;
@@ -23138,7 +23678,7 @@ class Player {
         }
         const feet = world.getBlock(Math.floor(this.position.x), Math.floor(this.position.y + 0.4), Math.floor(this.position.z));
         this.inWater = isWater(feet);
-        this.inLava = feet === Block.Lava;
+        this.inLava = isLava(feet);
         const forward = (input.isDown('KeyW') ? 1 : 0) - (input.isDown('KeyS') ? 1 : 0);
         const strafe = (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0);
         const sin = Math.sin(this.yaw);
@@ -23300,21 +23840,28 @@ const Block = {
     WaterFlow2: 14,
     WaterFlow3: 15,
     WaterFlow4: 16,
-    Snow: 17,
-    Ice: 18,
-    CoalOre: 19,
-    CopperOre: 20,
-    IronOre: 21,
-    EmeraldOre: 22,
-    DiamondOre: 23,
-    AppleLeaves: 24,
-    Torch: 25,
-    BirchLog: 26,
-    BirchLeaves: 27,
-    PineLog: 28,
-    PineLeaves: 29,
-    TropicalLeaves: 30,
-    Cactus: 31,
+    WaterFlow5: 17,
+    WaterFlow6: 18,
+    WaterFlow7: 19,
+    Snow: 20,
+    Ice: 21,
+    CoalOre: 22,
+    CopperOre: 23,
+    IronOre: 24,
+    EmeraldOre: 25,
+    DiamondOre: 26,
+    AppleLeaves: 27,
+    Torch: 28,
+    BirchLog: 29,
+    BirchLeaves: 30,
+    PineLog: 31,
+    PineLeaves: 32,
+    TropicalLeaves: 33,
+    Cactus: 34,
+    LavaFlow1: 35,
+    LavaFlow2: 36,
+    LavaFlow3: 37,
+    LavaFlow4: 38,
 };
 /** Index into the procedurally generated texture atlas. */
 const Tile = {
@@ -23510,7 +24057,7 @@ const BLOCKS = [
     },
 ];
 /** How far flowing water travels from its source before drying up. */
-const MAX_WATER_SPREAD = 4;
+const MAX_WATER_SPREAD = 7;
 for (let level = 1; level <= MAX_WATER_SPREAD; level++) {
     BLOCKS.push({
         name: 'Flowing Water',
@@ -23650,6 +24197,22 @@ BLOCKS.push({
 function blockContactDamage(id) {
     return BLOCKS[id].hurts ?? 0;
 }
+// Lava creeps only a third as far as water, as in the Overworld.
+const MAX_LAVA_SPREAD = 4;
+for (let level = 1; level <= MAX_LAVA_SPREAD; level++) {
+    BLOCKS.push({
+        name: 'Flowing Lava',
+        solid: false,
+        liquid: true,
+        top: Tile.Lava,
+        side: Tile.Lava,
+        bottom: Tile.Lava,
+        hardness: 0,
+        tool: null,
+        requiresTool: false,
+        drop: Block.Air,
+    });
+}
 const UNIT_BOX = [0, 0, 0, 1, 1, 1];
 /** False for blocks that do not fill their voxel, so neighbours keep their faces. */
 function isFullBlock(id) {
@@ -23665,7 +24228,17 @@ function isSolid(id) {
     return BLOCKS[id].solid;
 }
 function isWater(id) {
-    return id === Block.Water || (id >= Block.WaterFlow1 && id <= Block.WaterFlow4);
+    return id === Block.Water || (id >= Block.WaterFlow1 && id <= Block.WaterFlow7);
+}
+function isLava(id) {
+    return id === Block.Lava || (id >= Block.LavaFlow1 && id <= Block.LavaFlow4);
+}
+/** 0 for a source block, 1..MAX_LAVA_SPREAD for flows. */
+function lavaLevel(id) {
+    return id === Block.Lava ? 0 : id - Block.LavaFlow1 + 1;
+}
+function lavaFlowId(level) {
+    return Block.LavaFlow1 + Math.min(level, MAX_LAVA_SPREAD) - 1;
 }
 /** 0 for a source block, 1..MAX_WATER_SPREAD for flows. */
 function waterLevel(id) {
@@ -23678,9 +24251,18 @@ function waterFlowId(level) {
 function fluidGroup(id) {
     if (isWater(id))
         return 1;
-    if (id === Block.Lava)
+    if (isLava(id))
         return 2;
     return 0;
+}
+/** Rendered surface height, which is what tapers the edge of a spreading pool. */
+function fluidHeight(id) {
+    if (isWater(id))
+        return (8 - waterLevel(id)) / 9;
+    // Lava thins over only four levels, so each step drops further.
+    if (isLava(id))
+        return (8 - lavaLevel(id) * 1.75) / 9;
+    return 1;
 }
 function isLiquid(id) {
     return BLOCKS[id].liquid;
@@ -23701,14 +24283,19 @@ __exports["Tile"] = Tile;
 __exports["BLOCKS"] = BLOCKS;
 __exports["MAX_WATER_SPREAD"] = MAX_WATER_SPREAD;
 __exports["blockContactDamage"] = blockContactDamage;
+__exports["MAX_LAVA_SPREAD"] = MAX_LAVA_SPREAD;
 __exports["isFullBlock"] = isFullBlock;
 __exports["blockBox"] = blockBox;
 __exports["blockLight"] = blockLight;
 __exports["isSolid"] = isSolid;
 __exports["isWater"] = isWater;
+__exports["isLava"] = isLava;
+__exports["lavaLevel"] = lavaLevel;
+__exports["lavaFlowId"] = lavaFlowId;
 __exports["waterLevel"] = waterLevel;
 __exports["waterFlowId"] = waterFlowId;
 __exports["fluidGroup"] = fluidGroup;
+__exports["fluidHeight"] = fluidHeight;
 __exports["isLiquid"] = isLiquid;
 __exports["isAir"] = isAir;
 __exports["isBreakable"] = isBreakable;
@@ -24494,12 +25081,16 @@ __exports["drawTileTo"] = drawTileTo;
 "src/world/world.js": function (__exports, __require) {
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
-const { Block, MAX_WATER_SPREAD, hasGravity, isLiquid, isSolid, isWater, waterFlowId, waterLevel } = __require("src/world/blocks.js");
+const { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, hasGravity, isLava, isLiquid, isSolid, isWater, lavaFlowId, lavaLevel, waterFlowId, waterLevel } = __require("src/world/blocks.js");
 const { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey } = __require("src/world/chunk.js");
 const { buildChunkGeometry, TORCH_RANGE } = __require("src/world/mesher.js");
 const { generateChunk } = __require("src/world/terrain.js");
 const { atlasTexture } = __require("src/world/textures.js");
 const MAX_BUILDS_PER_FRAME = 3;
+// Physics ticks between fluid steps. The Overworld spec is 5 game ticks per
+// block for water and 30 for lava, against this game's 0.08s physics tick.
+const WATER_TICKS = 3;
+const LAVA_TICKS = 19;
 const HORIZONTAL = [
     [1, 0],
     [-1, 0],
@@ -24522,6 +25113,7 @@ class World {
     waterMaterial;
     lavaMaterial;
     pendingUpdates = new Set();
+    tickCount = 0;
     torches = new Map();
     daylightUniform = { value: 1 };
     constructor(scene, renderDistance = 6) {
@@ -24610,8 +25202,11 @@ class World {
     }
     /** Steps queued block updates by one voxel; call at a fixed rate. */
     tickPhysics() {
+        this.tickCount++;
         if (this.pendingUpdates.size === 0)
             return;
+        const waterDue = this.tickCount % WATER_TICKS === 0;
+        const lavaDue = this.tickCount % LAVA_TICKS === 0;
         const batch = this.pendingUpdates;
         this.pendingUpdates = new Set();
         const positions = [];
@@ -24631,8 +25226,19 @@ class World {
                 this.setBlock(x, y - 1, z, id);
                 continue;
             }
-            if (isWater(id))
-                this.flowWater(x, y, z, id);
+            // Fluids that are not due yet stay queued so they step on their own cadence.
+            if (isWater(id)) {
+                if (waterDue)
+                    this.flowWater(x, y, z, id);
+                else
+                    this.pendingUpdates.add(`${x},${y},${z}`);
+            }
+            else if (isLava(id)) {
+                if (lavaDue)
+                    this.flowLava(x, y, z, id);
+                else
+                    this.pendingUpdates.add(`${x},${y},${z}`);
+            }
         }
     }
     flowWater(x, y, z, id) {
@@ -24667,9 +25273,50 @@ class World {
         }
         return false;
     }
+    flowLava(x, y, z, id) {
+        // Lava meeting water sets solid, which is what stops flows underground.
+        if (this.touchesWater(x, y, z)) {
+            this.setBlock(x, y, z, Block.Cobblestone);
+            return;
+        }
+        const level = lavaLevel(id);
+        if (level > 0 && !this.lavaSupplied(x, y, z, level)) {
+            this.setBlock(x, y, z, Block.Air);
+            return;
+        }
+        if (this.getBlock(x, y - 1, z) === Block.Air) {
+            this.setBlock(x, y - 1, z, lavaFlowId(1));
+            return;
+        }
+        if (level >= MAX_LAVA_SPREAD)
+            return;
+        const next = lavaFlowId(level + 1);
+        for (const [dx, dz] of HORIZONTAL) {
+            if (this.getBlock(x + dx, y, z + dz) === Block.Air) {
+                this.setBlock(x + dx, y, z + dz, next);
+            }
+        }
+    }
+    lavaSupplied(x, y, z, level) {
+        if (isLava(this.getBlock(x, y + 1, z)))
+            return true;
+        for (const [dx, dz] of HORIZONTAL) {
+            const neighbor = this.getBlock(x + dx, y, z + dz);
+            if (isLava(neighbor) && lavaLevel(neighbor) < level)
+                return true;
+        }
+        return false;
+    }
+    touchesWater(x, y, z) {
+        for (const [dx, dy, dz] of NEIGHBORS) {
+            if (isWater(this.getBlock(x + dx, y + dy, z + dz)))
+                return true;
+        }
+        return false;
+    }
     quenchLava(x, y, z) {
         for (const [dx, dy, dz] of NEIGHBORS) {
-            if (this.getBlock(x + dx, y + dy, z + dz) === Block.Lava) {
+            if (isLava(this.getBlock(x + dx, y + dy, z + dz))) {
                 this.setBlock(x + dx, y + dy, z + dz, Block.Cobblestone);
             }
         }
@@ -24684,7 +25331,7 @@ class World {
         return isWater(this.getBlock(x, y, z));
     }
     isLavaAt(x, y, z) {
-        return this.getBlock(x, y, z) === Block.Lava;
+        return isLava(this.getBlock(x, y, z));
     }
     /** True when nothing blocks the column above, i.e. the spot can see the sky. */
     isSkyExposed(x, y, z) {
@@ -24980,7 +25627,7 @@ class Hud {
       <li><b>WASD</b> move &middot; <b>Shift</b> or <b>double-tap W</b> sprint &middot; <b>Space</b> jump</li>
       <li><b>Mouse</b> or <b>arrow keys</b> look around</li>
       <li><b>Hold left click</b> or <b>Ctrl</b> mine &middot; <b>Left click</b> attack &middot; <b>Right click</b> place / use</li>
-      <li><b>1-9</b> select slot &middot; <b>E</b> inventory &amp; crafting &middot; <b>F</b> flight &middot; <b>Esc</b> release cursor</li>
+      <li><b>1-9</b> or <b>scroll</b> select slot &middot; <b>E</b> inventory &amp; crafting &middot; <b>F</b> flight &middot; <b>Esc</b> release cursor</li>
       <li>Mine logs, craft planks and sticks, then place a crafting table for tools.</li>
       <li class="warn">Zombies and spiders spawn in the dark &mdash; stay in the light.</li>`;
         panel.appendChild(controls);
@@ -86398,6 +87045,9 @@ const Item = {
     RottenFlesh: 204,
     Egg: 205,
     Coal: 206,
+    Gunpowder: 207,
+    Bone: 208,
+    Arrow: 209,
 };
 
 __exports["Item"] = Item;
@@ -86405,24 +87055,54 @@ __exports["Item"] = Item;
 "src/engine/boxmodel.js": function (__exports, __require) {
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
+/** World size of one mottle patch, matching the coarse pixels of a 16x16 skin. */
+const PATCH = 0.125;
+function hash(x, y, z) {
+    const n = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
+    return n - Math.floor(n);
+}
+/** Two octaves, so patches clump into blotches instead of looking like per-pixel noise. */
+function blotch(x, y, z) {
+    const q = (v, step) => Math.floor(v / step);
+    const fine = hash(q(x, PATCH), q(y, PATCH), q(z, PATCH));
+    const coarse = hash(q(x, PATCH * 2), q(y, PATCH * 2), q(z, PATCH * 2));
+    return fine * 0.45 + coarse * 0.55;
+}
 /** Bakes box parts into one non-indexed geometry with directional shading in vertex colours. */
 function buildBoxGeometry(parts) {
     const positions = [];
     const colors = [];
     const color = new THREE.Color();
     for (const part of parts) {
-        const box = new THREE.BoxGeometry(part.size[0], part.size[1], part.size[2])
+        const mottle = part.mottle ?? 0;
+        const segments = mottle > 0
+            ? part.size.map((s) => Math.max(1, Math.round(s / PATCH)))
+            : [1, 1, 1];
+        const box = new THREE.BoxGeometry(part.size[0], part.size[1], part.size[2], segments[0], segments[1], segments[2])
             .translate(part.offset[0], part.offset[1], part.offset[2])
             .toNonIndexed();
         const position = box.getAttribute('position');
         const normal = box.getAttribute('normal');
         color.setHex(part.color);
-        for (let i = 0; i < position.count; i++) {
-            positions.push(position.getX(i), position.getY(i), position.getZ(i));
-            const ny = normal.getY(i);
-            const nx = normal.getX(i);
-            const shade = ny > 0.5 ? 1 : ny < -0.5 ? 0.55 : Math.abs(nx) > 0.5 ? 0.74 : 0.9;
-            colors.push(color.r * shade, color.g * shade, color.b * shade);
+        // Walked a quad at a time, because a patch must be flat rather than a gradient across it.
+        for (let quad = 0; quad < position.count; quad += 6) {
+            let cx = 0;
+            let cy = 0;
+            let cz = 0;
+            for (let k = 0; k < 6; k++) {
+                cx += position.getX(quad + k);
+                cy += position.getY(quad + k);
+                cz += position.getZ(quad + k);
+            }
+            const patch = mottle > 0 ? 1 - mottle * blotch(cx / 6, cy / 6, cz / 6) : 1;
+            for (let k = 0; k < 6; k++) {
+                const i = quad + k;
+                positions.push(position.getX(i), position.getY(i), position.getZ(i));
+                const ny = normal.getY(i);
+                const nx = normal.getX(i);
+                const shade = (ny > 0.5 ? 1 : ny < -0.5 ? 0.55 : Math.abs(nx) > 0.5 ? 0.74 : 0.9) * patch;
+                colors.push(color.r * shade, color.g * shade, color.b * shade);
+            }
         }
         box.dispose();
     }
@@ -86530,7 +87210,7 @@ __exports["mulberry32"] = mulberry32;
 "src/world/mesher.js": function (__exports, __require) {
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
-const { BLOCKS, Block, blockBox, fluidGroup, isFullBlock } = __require("src/world/blocks.js");
+const { BLOCKS, Block, blockBox, fluidGroup, fluidHeight, isFullBlock } = __require("src/world/blocks.js");
 const { CHUNK_HEIGHT, CHUNK_SIZE } = __require("src/world/chunk.js");
 const { tileUVBounds } = __require("src/world/textures.js");
 /** How far a torch casts light, in blocks. */
@@ -86601,6 +87281,34 @@ function tileUV(tile, u, v) {
     const { u0, u1, v0, v1 } = tileUVBounds(tile);
     return [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v];
 }
+/**
+ * Averages the surrounding fluid heights at one corner. Sharing the average
+ * between neighbours is what keeps adjoining surfaces continuous.
+ */
+function cornerHeight(getBlock, wx, y, wz, cx, cz, group) {
+    let total = 0;
+    let count = 0;
+    for (let dz = cz - 1; dz <= cz; dz++) {
+        for (let dx = cx - 1; dx <= cx; dx++) {
+            if (fluidGroup(getBlock(wx + dx, y + 1, wz + dz)) === group)
+                return 1;
+            const id = getBlock(wx + dx, y, wz + dz);
+            if (fluidGroup(id) === group) {
+                total += fluidHeight(id);
+                count++;
+            }
+        }
+    }
+    return count > 0 ? total / count : fluidHeight(getBlock(wx, y, wz));
+}
+function fluidCorners(getBlock, wx, y, wz, group) {
+    return [
+        cornerHeight(getBlock, wx, y, wz, 0, 0, group),
+        cornerHeight(getBlock, wx, y, wz, 1, 0, group),
+        cornerHeight(getBlock, wx, y, wz, 0, 1, group),
+        cornerHeight(getBlock, wx, y, wz, 1, 1, group),
+    ];
+}
 class MeshBuffer {
     positions = [];
     normals = [];
@@ -86608,12 +87316,16 @@ class MeshBuffer {
     colors = [];
     lights = [];
     indices = [];
-    addFace(face, x, y, z, tile, box, lightAt) {
+    addFace(face, x, y, z, tile, box, lightAt, corners) {
         const base = this.positions.length / 3;
         for (const corner of face.corners) {
             const px = x + box[0] + corner.pos[0] * (box[3] - box[0]);
-            const py = y + box[1] + corner.pos[1] * (box[4] - box[1]);
             const pz = z + box[2] + corner.pos[2] * (box[5] - box[2]);
+            // A fluid's top vertices ride on their own corner height, which is what
+            // turns a flat slab into a wedge.
+            const py = corners && corner.pos[1] === 1
+                ? y + corners[(corner.pos[2] > 0.5 ? 2 : 0) + (corner.pos[0] > 0.5 ? 1 : 0)]
+                : y + box[1] + corner.pos[1] * (box[4] - box[1]);
             this.positions.push(px, py, pz);
             this.normals.push(face.dir[0], face.dir[1], face.dir[2]);
             const [u, v] = tileUV(tile, corner.uv[0], corner.uv[1]);
@@ -86666,6 +87378,10 @@ function buildChunkGeometry(chunk, getBlock, torches = []) {
                 const group = fluidGroup(id);
                 const target = group === 2 ? lava : group === 1 ? water : solid;
                 const box = blockBox(id);
+                // Submerged fluid fills its voxel, so only the surface needs corners.
+                const corners = group !== 0 && fluidGroup(getBlock(originX + x, y + 1, originZ + z)) !== group
+                    ? fluidCorners(getBlock, originX + x, y, originZ + z, group)
+                    : null;
                 for (const face of FACES) {
                     const neighbor = getBlock(originX + x + face.dir[0], y + face.dir[1], originZ + z + face.dir[2]);
                     const neighborGroup = fluidGroup(neighbor);
@@ -86673,7 +87389,7 @@ function buildChunkGeometry(chunk, getBlock, torches = []) {
                         !(neighborGroup !== 0 && neighborGroup !== group))
                         continue;
                     const tile = face.dir[1] === 1 ? def.top : face.dir[1] === -1 ? def.bottom : def.side;
-                    target.addFace(face, x, y, z, tile, box, lightAt);
+                    target.addFace(face, x, y, z, tile, box, lightAt, corners);
                 }
             }
         }
