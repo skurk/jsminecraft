@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, hasGravity, isLava, isLiquid, isSolid, isWater, lavaFlowId, lavaLevel, waterFlowId, waterLevel, } from "./blocks.js";
+import { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, hasGravity, isLava, isLiquid, isSolid, isWater, lavaFlowId, lavaLevel, waterFlowId, waterLevel } from "./blocks.js";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey } from "./chunk.js";
 import { buildChunkGeometry, TORCH_RANGE } from "./mesher.js";
 import { generateChunk } from "./terrain.js";

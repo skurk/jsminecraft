@@ -447,6 +447,42 @@ export function isLiquid(id) {
 export function isAir(id) {
     return id === Block.Air;
 }
+/** Which procedural footstep voicing a block uses when walked on. */
+export function blockSurface(id) {
+    switch (id) {
+        case Block.Grass:
+            return 'grass';
+        case Block.Sand:
+            return 'sand';
+        case Block.Snow:
+            return 'snow';
+        case Block.Log:
+        case Block.BirchLog:
+        case Block.PineLog:
+        case Block.Planks:
+        case Block.CraftingTable:
+        case Block.Cactus:
+            return 'wood';
+        case Block.Leaves:
+        case Block.AppleLeaves:
+        case Block.BirchLeaves:
+        case Block.PineLeaves:
+        case Block.TropicalLeaves:
+            return 'leaves';
+        case Block.Stone:
+        case Block.Cobblestone:
+        case Block.Bedrock:
+        case Block.Ice:
+        case Block.CoalOre:
+        case Block.CopperOre:
+        case Block.IronOre:
+        case Block.EmeraldOre:
+        case Block.DiamondOre:
+            return 'stone';
+        default:
+            return 'dirt';
+    }
+}
 export function isBreakable(id) {
     return id !== Block.Air && Number.isFinite(BLOCKS[id].hardness);
 }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import { audio } from "../engine/audio.js";
 import { moveBody } from "../engine/physics.js";
-import { Block, blockContactDamage, isLava, isWater } from "../world/blocks.js";
+import { Block, blockContactDamage, blockSurface, isLava, isWater } from "../world/blocks.js";
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.3;
 const EYE_HEIGHT = 1.62;
@@ -37,6 +38,13 @@ const AIR_CAPACITY = 14;
 const DROWN_DPS = 2;
 const AIR_REFILL_RATE = 5;
 const SICK_DPS = 0.35;
+/** Blocks of ground covered between footfalls. */
+const STRIDE = 2.1;
+/** A drop shorter than this lands quietly, so hopping doesn't boom. */
+const LANDING_FALL = 1.2;
+const JUMP_VOLUME = 1.2;
+/** Quiet beat after a take-off, so the push-off doesn't run into a stride. */
+const JUMP_STEP_DELAY = 0.25;
 const DEATH_TILT = Math.PI / 2;
 const DEATH_TILT_SPEED = Math.PI;
 export class Player {
@@ -63,6 +71,8 @@ export class Player {
     fallDistance = 0;
     burnTimer = 0;
     deathTilt = 0;
+    strideWalked = 0;
+    stepDelay = 0;
     constructor(x, y, z) {
         this.position.set(x, y, z);
     }
@@ -114,6 +124,8 @@ export class Player {
         this.fallDistance = 0;
         this.burnTimer = 0;
         this.deathTilt = 0;
+        this.strideWalked = 0;
+        this.stepDelay = 0;
         this.air = AIR_CAPACITY;
         this.liquidExit = 0;
         this.sickTimer = 0;
@@ -196,6 +208,10 @@ export class Player {
         }
         else {
             if (wantsUp && (this.onGround || this.liquidExit > 0)) {
+                if (this.onGround) {
+                    audio.playFootstep(this.surfaceUnder(world), JUMP_VOLUME);
+                    this.stepDelay = JUMP_STEP_DELAY;
+                }
                 this.velocity.y = JUMP_SPEED;
                 this.liquidExit = 0;
             }
@@ -203,7 +219,12 @@ export class Player {
         }
         this.liquidExit = this.inWater || this.inLava ? LIQUID_EXIT_GRACE : Math.max(0, this.liquidExit - dt);
         const previousY = this.position.y;
+        const previousX = this.position.x;
+        const previousZ = this.position.z;
+        const wasAirborne = !this.onGround;
+        const fallen = this.fallDistance;
         moveBody(world, this, dt);
+        this.updateFootsteps(dt, world, previousX, previousZ, wasAirborne, fallen);
         this.updateFallDamage(previousY);
         this.updateBurning(dt);
         this.updateContactDamage(world);
@@ -214,6 +235,34 @@ export class Player {
     applyTo(camera) {
         camera.position.copy(this.eyePosition);
         camera.rotation.set(this.pitch, this.yaw, this.deathTilt, 'YXZ');
+    }
+    /** The footstep voicing of whatever is being stood on right now. */
+    surfaceUnder(world) {
+        if (this.inWater)
+            return 'water';
+        return blockSurface(world.getBlock(Math.floor(this.position.x), Math.floor(this.position.y - 0.2), Math.floor(this.position.z)));
+    }
+    /** Footfalls are paced by ground covered, so they track walking and sprinting alike. */
+    updateFootsteps(dt, world, previousX, previousZ, wasAirborne, fallen) {
+        this.stepDelay = Math.max(0, this.stepDelay - dt);
+        if (this.flying || this.inLava || !this.onGround) {
+            // Halfway through a stride, so the first step after landing comes soon.
+            this.strideWalked = STRIDE * 0.5;
+            return;
+        }
+        if (this.stepDelay > 0)
+            return;
+        const surface = this.surfaceUnder(world);
+        if (wasAirborne) {
+            this.strideWalked = 0;
+            audio.playFootstep(surface, fallen > LANDING_FALL ? 1.4 : 0.8);
+            return;
+        }
+        this.strideWalked += Math.hypot(this.position.x - previousX, this.position.z - previousZ);
+        if (this.strideWalked < STRIDE)
+            return;
+        this.strideWalked -= STRIDE;
+        audio.playFootstep(surface, this.inWater ? 0.8 : 1);
     }
     updateFallDamage(previousY) {
         if (this.flying || this.inWater || this.inLava) {

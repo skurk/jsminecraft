@@ -9,6 +9,11 @@ const RAIN_SPEED = 28;
 const SNOW_SPEED = 3.2;
 const RAIN_STREAK = 1.4;
 const BOLT_SEGMENTS = 14;
+/** Seconds between strikes: a storm is busy, plain night rain is a rare rumble. */
+const STORM_GAP = [5, 14];
+const NIGHT_RAIN_GAP = [22, 50];
+/** Below this, rain is too thin to carry lightning. */
+const NIGHT_RAIN_INTENSITY = 0.25;
 function buildRain() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(COUNT * 6), 3));
@@ -64,6 +69,8 @@ export class Weather {
     wind = new THREE.Vector2(1, 0.35);
     positions = new Float32Array(COUNT * 3);
     speeds = new Float32Array(COUNT);
+    /** Called with the distance in blocks each time a bolt lands. */
+    onStrike = null;
     constructor(scene) {
         for (let i = 0; i < COUNT; i++) {
             this.positions[i * 3] = (Math.random() * 2 - 1) * AREA;
@@ -92,7 +99,7 @@ export class Weather {
             return this.cold ? 'blizzard' : 'thunderstorm';
         return this.cold ? 'snow' : 'rain';
     }
-    update(dt, player, world) {
+    update(dt, player, world, day) {
         this.timer -= dt;
         if (this.timer <= 0)
             this.roll();
@@ -109,7 +116,7 @@ export class Weather {
         this.group.position.copy(player.position);
         if (this.falling)
             this.step(dt);
-        this.updateLightning(dt);
+        this.updateLightning(dt, day.isNight);
     }
     roll() {
         if (this.state === 'clear') {
@@ -181,21 +188,29 @@ export class Weather {
         attribute.needsUpdate = true;
         this.snow.geometry.setDrawRange(0, active);
     }
-    updateLightning(dt) {
-        this.flash = Math.max(0, this.flash - dt * 3.5);
+    updateLightning(dt, night) {
+        this.flash = Math.max(0, this.flash - dt * 5);
         this.boltTimer = Math.max(0, this.boltTimer - dt);
         this.bolt.visible = this.boltTimer > 0 && this.falling;
-        if (!this.storming || !this.falling)
+        if (!this.falling || this.cold)
+            return;
+        // Outside a storm, lightning is a night-time event only.
+        const nightRain = night && this.intensity > NIGHT_RAIN_INTENSITY;
+        if (!this.storming && !nightRain)
             return;
         this.strikeTimer -= dt;
         if (this.strikeTimer > 0)
             return;
-        this.strikeTimer = 5 + Math.random() * 14;
+        const [min, max] = this.storming ? STORM_GAP : NIGHT_RAIN_GAP;
+        this.strikeTimer = min + Math.random() * (max - min);
         this.flash = 1;
         this.boltTimer = 0.16;
-        this.strike();
+        this.onStrike?.(this.strike());
     }
-    /** Lays out a jagged bolt somewhere near the player, in group-local space. */
+    /**
+     * Lays out a jagged bolt somewhere near the player, in group-local space,
+     * and returns how far off it landed.
+     */
     strike() {
         const attribute = this.bolt.geometry.getAttribute('position');
         const out = attribute.array;
@@ -218,5 +233,6 @@ export class Weather {
             out[t + 5] = z;
         }
         attribute.needsUpdate = true;
+        return distance;
     }
 }

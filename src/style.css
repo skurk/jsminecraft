@@ -99,27 +99,6 @@ canvas {
   color: #2b2b2b;
 }
 
-.air {
-  position: absolute;
-  bottom: 110px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 4px;
-  font-size: 13px;
-  line-height: 1;
-  color: #9fd8ff;
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.9);
-}
-
-.air.hidden {
-  display: none;
-}
-
-.bubble.empty {
-  opacity: 0.15;
-}
-
 .damage-flash {
   position: absolute;
   inset: 0;
@@ -169,55 +148,6 @@ canvas {
 
 .fire.hidden {
   display: none;
-}
-
-.sick {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at center, rgba(90, 150, 40, 0) 30%, rgba(74, 128, 32, 0.55) 100%);
-  animation: queasy 3.2s ease-in-out infinite alternate;
-}
-
-.sick.hidden {
-  display: none;
-}
-
-.toast {
-  position: absolute;
-  bottom: 134px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 5px 14px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.55);
-  font-size: 14px;
-  white-space: nowrap;
-  color: #ffe9b8;
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.9);
-  opacity: 0;
-}
-
-.toast.active {
-  animation: toast-fade 1.6s ease-out;
-}
-
-@keyframes toast-fade {
-  0%,
-  60% {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes queasy {
-  from {
-    opacity: 0.45;
-  }
-  to {
-    opacity: 0.95;
-  }
 }
 
 @keyframes flicker {
@@ -510,7 +440,7 @@ canvas {
 }
 
 .panel {
-  max-width: 640px;
+  max-width: 460px;
   padding: 28px 34px;
   text-align: center;
   color: #f2f5f8;
@@ -541,7 +471,7 @@ canvas {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  width: 176px;
+  width: 132px;
   padding: 10px 8px;
   font: inherit;
   color: #eef2f7;

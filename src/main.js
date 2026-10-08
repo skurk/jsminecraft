@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { DayCycle } from "./engine/daycycle.js";
 import { DEFAULT_DIFFICULTY, DIFFICULTIES } from "./engine/difficulty.js";
 import { Input } from "./engine/input.js";
+import { audio } from "./engine/audio.js";
 import { Sky } from "./engine/sky.js";
 import { Weather } from "./engine/weather.js";
 import { Explosions } from "./engine/explosion.js";
@@ -13,7 +14,7 @@ import { Hand } from "./player/hand.js";
 import { HOTBAR_SIZE, Hotbar } from "./player/hotbar.js";
 import { Inventory } from "./player/inventory.js";
 import { Player } from "./player/player.js";
-import { BLOCKS, Block, isBreakable, isLava, isWater } from "./world/blocks.js";
+import { BLOCKS, Block, blockSurface, isBreakable, isLava, isWater } from "./world/blocks.js";
 import { CHUNK_SIZE } from "./world/chunk.js";
 import { SEA_LEVEL, biomeNameAt, terrainHeight } from "./world/terrain.js";
 import { updateFluidAnimation } from "./world/textures.js";
@@ -57,6 +58,7 @@ const world = new World(scene, RENDER_DISTANCE);
 const day = new DayCycle();
 const sky = new Sky(scene);
 const weather = new Weather(scene);
+weather.onStrike = (distance) => audio.playThunder(distance);
 const explosions = new Explosions(scene);
 const mobs = new MobManager(scene, world);
 const items = new ItemManager(scene, world);
@@ -107,6 +109,11 @@ scene.add(highlight);
 const hud = new Hud(hudRoot, HOTBAR_SIZE);
 const menu = new InventoryScreen(hudRoot, inventory, hotbar);
 const input = new Input(renderer.domElement);
+// Browsers only let an AudioContext start from a user gesture, and suspend it
+// again when the tab sleeps, so every gesture gets a chance to revive it.
+const wakeAudio = () => audio.resume();
+window.addEventListener('pointerdown', wakeAudio);
+window.addEventListener('keydown', wakeAudio);
 hudRoot.addEventListener('mousedown', (event) => {
     if (menu.open)
         return;
@@ -260,6 +267,7 @@ function updateMining(dt) {
     if (mining.swingTimer >= MINE_SWING_INTERVAL) {
         mining.swingTimer = 0;
         hand.swing();
+        audio.playHit(blockSurface(blockId));
     }
     const tool = heldItem();
     mining.progress += dt / breakSeconds(blockId, tool);
@@ -306,7 +314,7 @@ function updateAtmosphere(dt) {
     const inLava = isLava(eyeBlock);
     const underwater = isWater(eyeBlock);
     const fog = scene.fog;
-    const brightness = Math.min(1, day.brightness * weather.lightScale + weather.flash * 0.5);
+    const brightness = Math.min(1, day.brightness * weather.lightScale + weather.flash * 0.75);
     const skyColor = day.skyColor;
     skyColor.lerp(OVERCAST_COLOR, weather.overcast * day.daylight);
     skyColor.lerp(LIGHTNING_COLOR, weather.flash * 0.75);
@@ -377,8 +385,11 @@ function animate() {
         player.update(dt, input, world);
         mobs.update(dt, player, day);
         items.update(dt, player, inventory);
-        weather.update(dt, player, world);
+        weather.update(dt, player, world, day);
     }
+    // Snow falls silently, and a roof cuts the downpour off with it.
+    audio.setRain(running && weather.falling && !weather.cold ? weather.intensity : 0);
+    audio.setUnderwater(running && player.submerged ? 1 : 0);
     explosions.update(dt);
     updateMining(dt);
     updateHeldItem();
