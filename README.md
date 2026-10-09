@@ -1,13 +1,16 @@
 # jsminecraft
 A playable 3D block based clone of the famous Minecraft game.
 Using three.js for swift and responsive graphics rendering.
-100% Javascript. Crazy, huh?
+And it's 100% Javascript - crazy, huh?
 
 ## Screenshot
 ![Screenshot](https://github.com/skurk/jsminecraft/blob/main/jsminecraft-screenshot.png?raw=true)
 
 ## Demo
 [Try the demo on Github](https://htmlpreview.github.io/?https://github.com/skurk/jsminecraft/blob/main/singlefile-standalone.html)
+
+## Requirements
+- Modern web browser (Chrome, Firefox, Opera, Safari, Edge, etc)
 
 ## Features
 - Enemies (creepers, zombies, skeletons, and spiders)
@@ -22,8 +25,8 @@ Using three.js for swift and responsive graphics rendering.
 - More enemies
 - Villagers, towns
 - Multiplayer/game servers
-- Lots more, feel free to add the features you miss the most.
 - Load/save/continue function
+- ...feel free to add the features you miss the most!
 
 ## License
 GNU GPL v3, see LICENSE file for details.
