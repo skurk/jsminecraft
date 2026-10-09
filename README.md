@@ -1,7 +1,8 @@
 # jsminecraft
 A playable 3D block based clone of the famous Minecraft game.
 Using three.js for swift and responsive graphics rendering.
-And it's 100% Javascript - crazy, huh?
+
+100% Javascript - crazy, huh?
 
 ## Screenshot
 ![Screenshot](https://github.com/skurk/jsminecraft/blob/main/jsminecraft-screenshot.png?raw=true)
