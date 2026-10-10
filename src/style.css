@@ -510,7 +510,7 @@ canvas {
 }
 
 .panel {
-  width: min(760px, 94vw);
+  width: min(980px, 96vw);
   padding: 28px 34px;
   text-align: center;
   color: #f2f5f8;
