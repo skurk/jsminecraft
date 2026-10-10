@@ -656,21 +656,12 @@ canvas {
   text-align: right;
 }
     </style>
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js"
-        }
-      }
-    </script>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module">
-import * as __external0 from "three";
+    <script>
 (function () {
 'use strict';
-var __externals = { "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js": __external0 };
 var __modules = {
 "src/main.js": function (__exports, __require) {
 'use strict';
@@ -8789,6 +8780,7 @@ __exports["craft"] = craft;
 }
 };
 var __cache = {};
+var __externals = {};
 function __require(id) {
   if (__externals[id]) return __externals[id];
   if (__cache[id]) return __cache[id];
@@ -8796,7 +8788,15 @@ function __require(id) {
   __modules[id](exports, __require);
   return exports;
 }
-__require("src/main.js");
+// Dynamic import, so the page stays a classic script: viewers such as
+// htmlpreview.github.io re-inject scripts without their "module" type.
+var __remote = ["https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js"];
+Promise.all(__remote.map(function (url) { return import(url); })).then(function (loaded) {
+  __remote.forEach(function (url, i) { __externals[url] = loaded[i]; });
+  __require("src/main.js");
+}).catch(function (error) {
+  document.body.textContent = 'Failed to load dependencies: ' + error.message;
+});
 })();
     </script>
   </body>
