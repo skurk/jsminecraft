@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCKS, Block, blockBox, fluidGroup, fluidHeight, isFullBlock } from "./blocks.js";
+import { BLOCKS, Block, blockBox, fluidGroup, fluidHeight, isCross, isCutout, isFullBlock } from "./blocks.js";
 import { CHUNK_HEIGHT, CHUNK_SIZE } from "./chunk.js";
 import { tileUVBounds } from "./textures.js";
 /** How far a torch casts light, in blocks. */
@@ -70,6 +70,14 @@ function tileUV(tile, u, v) {
     const { u0, u1, v0, v1 } = tileUVBounds(tile);
     return [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v];
 }
+/** Offsets of the four upright planes that make up a crop, as in the original model. */
+const CROSS_PLANES = [
+    { axis: 'x', offset: 0.25 },
+    { axis: 'x', offset: 0.75 },
+    { axis: 'z', offset: 0.25 },
+    { axis: 'z', offset: 0.75 },
+];
+const CROSS_LIGHT = 0.95;
 /**
  * Averages the surrounding fluid heights at one corner. Sharing the average
  * between neighbours is what keeps adjoining surfaces continuous.
@@ -124,6 +132,24 @@ class MeshBuffer {
         }
         this.indices.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
     }
+    /** Upright planes for crops; the material draws both sides so winding is free. */
+    addCross(x, y, z, tile, lightAt) {
+        for (const { axis, offset } of CROSS_PLANES) {
+            const base = this.positions.length / 3;
+            for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+                const px = axis === 'x' ? x + offset : x + u;
+                const py = y + v;
+                const pz = axis === 'x' ? z + u : z + offset;
+                this.positions.push(px, py, pz);
+                this.normals.push(axis === 'x' ? 1 : 0, 0, axis === 'x' ? 0 : 1);
+                const [tu, tv] = tileUV(tile, u, v);
+                this.uvs.push(tu, tv);
+                this.colors.push(CROSS_LIGHT, CROSS_LIGHT, CROSS_LIGHT);
+                this.lights.push(lightAt(px, py, pz));
+            }
+            this.indices.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+        }
+    }
     toGeometry() {
         if (this.indices.length === 0)
             return null;
@@ -140,6 +166,7 @@ class MeshBuffer {
 }
 export function buildChunkGeometry(chunk, getBlock, torches = []) {
     const solid = new MeshBuffer();
+    const cutout = new MeshBuffer();
     const water = new MeshBuffer();
     const lava = new MeshBuffer();
     const originX = chunk.cx * CHUNK_SIZE;
@@ -165,8 +192,12 @@ export function buildChunkGeometry(chunk, getBlock, torches = []) {
                     continue;
                 const def = BLOCKS[id];
                 const group = fluidGroup(id);
-                const target = group === 2 ? lava : group === 1 ? water : solid;
+                const target = group === 2 ? lava : group === 1 ? water : isCutout(id) ? cutout : solid;
                 const box = blockBox(id);
+                if (isCross(id)) {
+                    target.addCross(x, y, z, def.top, lightAt);
+                    continue;
+                }
                 // Submerged fluid fills its voxel, so only the surface needs corners.
                 const corners = group !== 0 && fluidGroup(getBlock(originX + x, y + 1, originZ + z)) !== group
                     ? fluidCorners(getBlock, originX + x, y, originZ + z, group)
@@ -183,5 +214,5 @@ export function buildChunkGeometry(chunk, getBlock, torches = []) {
             }
         }
     }
-    return { solid: solid.toGeometry(), water: water.toGeometry(), lava: lava.toGeometry() };
+    return { solid: solid.toGeometry(), cutout: cutout.toGeometry(), water: water.toGeometry(), lava: lava.toGeometry() };
 }

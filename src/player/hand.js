@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildBoxGeometry } from "../engine/boxmodel.js";
 import { blockCubeGeometry } from "../items/blockmodel.js";
-import { isBlockItem, itemTexture } from "../items/items.js";
+import { isSpriteModel, itemTexture } from "../items/items.js";
 import { Block } from "../world/blocks.js";
 import { atlasTexture } from "../world/textures.js";
 const SKIN = 0xd9a077;
@@ -58,7 +58,7 @@ export class Hand {
         if (itemId === this.heldItem)
             return;
         this.heldItem = itemId;
-        const block = itemId !== null && isBlockItem(itemId) && itemId !== Block.Air;
+        const block = itemId !== null && itemId !== Block.Air && !isSpriteModel(itemId);
         this.held.visible = itemId !== null && !block;
         this.heldBlock.visible = block;
         if (block) {

@@ -28,6 +28,7 @@ export class World {
     chunks = new Map();
     renderDistance;
     solidMaterial;
+    cutoutMaterial;
     waterMaterial;
     lavaMaterial;
     pendingUpdates = new Set();
@@ -41,10 +42,19 @@ export class World {
         this.solidMaterial = new THREE.MeshBasicMaterial({ map, vertexColors: true });
         // Block light has to survive the day/night tint, so it is mixed in the shader
         // rather than folded into material.color.
-        this.solidMaterial.onBeforeCompile = (shader) => {
+        const mixBlockLight = (shader) => {
             shader.uniforms.uDaylight = this.daylightUniform;
             shader.vertexShader = `attribute float blockLight;\nuniform float uDaylight;\n${shader.vertexShader}`.replace('#include <color_vertex>', '#include <color_vertex>\n\tvColor.rgb *= max(uDaylight, blockLight);');
         };
+        this.solidMaterial.onBeforeCompile = mixBlockLight;
+        // Glass and crops keep their texture's holes via alpha testing.
+        this.cutoutMaterial = new THREE.MeshBasicMaterial({
+            map,
+            vertexColors: true,
+            alphaTest: 0.5,
+            side: THREE.DoubleSide,
+        });
+        this.cutoutMaterial.onBeforeCompile = mixBlockLight;
         this.waterMaterial = new THREE.MeshBasicMaterial({
             map,
             vertexColors: true,
@@ -356,7 +366,7 @@ export class World {
         this.pendingUpdates.add(`${x},${y},${z}`);
     }
     rebuild(chunk) {
-        const { solid, water, lava } = buildChunkGeometry(chunk, (x, y, z) => this.getBlock(x, y, z), this.torchesNear(chunk.cx, chunk.cz));
+        const { solid, cutout, water, lava } = buildChunkGeometry(chunk, (x, y, z) => this.getBlock(x, y, z), this.torchesNear(chunk.cx, chunk.cz));
         chunk.dispose(this.scene);
         const originX = chunk.cx * CHUNK_SIZE;
         const originZ = chunk.cz * CHUNK_SIZE;
@@ -372,6 +382,7 @@ export class World {
             return mesh;
         };
         chunk.solidMesh = place(solid, this.solidMaterial, 0);
+        chunk.cutoutMesh = place(cutout, this.cutoutMaterial, 0);
         chunk.lavaMesh = place(lava, this.lavaMaterial, 0);
         chunk.waterMesh = place(water, this.waterMaterial, 1);
         chunk.dirty = false;

@@ -63,6 +63,9 @@ const THUNDER_NEAR = 20;
 const THUNDER_FAR = 80;
 /** Swells in the dying roll; real thunder never fades evenly. */
 const THUNDER_ROLLS = 4;
+/** Knocks in a tumble, and the seconds they are spread over. */
+const TUMBLE_KNOCKS = 5;
+const TUMBLE_SPAN = 0.5;
 /**
  * A looping ambience. The layers run for the life of the page and only the
  * gain above them moves, so switching one on costs nothing.
@@ -207,6 +210,55 @@ class AudioEngine {
         source.connect(high).connect(low).connect(gain).connect(this.master);
         source.start(now, Math.random() * (NOISE_SECONDS - 0.5), 0.4);
     }
+    /** A bright hiss of breaking panes followed by a few falling shards. */
+    playGlassBreak() {
+        if (!this.ready)
+            return;
+        const now = this.ctx.currentTime;
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.noise;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.setValueAtTime(2400, now);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.26);
+        source.connect(filter).connect(gain).connect(this.master);
+        source.start(now);
+        source.stop(now + 0.3);
+        for (let i = 0; i < 4; i++)
+            this.tinkle(now + 0.03 + i * 0.045 + Math.random() * 0.03);
+    }
+    tinkle(at) {
+        const osc = this.ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(1900 + Math.random() * 2500, at);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.12, at);
+        gain.gain.exponentialRampToValueAtTime(0.0005, at + 0.13);
+        osc.connect(gain).connect(this.master);
+        osc.start(at);
+        osc.stop(at + 0.15);
+    }
+    /** Soft muffled "pff" of a crop being torn up. */
+    playCropBreak() {
+        if (!this.ready)
+            return;
+        const now = this.ctx.currentTime;
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.noise;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(900, now);
+        filter.frequency.exponentialRampToValueAtTime(380, now + 0.12);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.09, now + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0004, now + 0.15);
+        source.connect(filter).connect(gain).connect(this.master);
+        source.start(now);
+        source.stop(now + 0.18);
+    }
     /** A short knock against a block, voiced by how dense the material is. */
     playHit(surface, volume = 1) {
         const voice = HITS[surface] ?? HITS.dirt;
@@ -251,6 +303,21 @@ class AudioEngine {
         envelope(gain.gain, now, peak * 0.9, voice.ring, HIT_ATTACK);
         source.connect(band).connect(gain).connect(this.master);
         source.start(now, Math.random() * (NOISE_SECONDS - voice.ring - 0.1), voice.ring + 0.1);
+    }
+    /** Cut wood clattering away: a run of knocks that bunch up and drop in pitch. */
+    playTumble() {
+        const voice = HITS.wood;
+        if (!this.ready)
+            return;
+        const now = this.ctx.currentTime;
+        for (let i = 0; i < TUMBLE_KNOCKS; i++) {
+            // The exponent crowds the later knocks together, as a piece settles.
+            const at = now + TUMBLE_SPAN * Math.pow(i / TUMBLE_KNOCKS, 0.7) + Math.random() * 0.03;
+            const fade = 1 - i / TUMBLE_KNOCKS;
+            const peak = voice.gain * (0.3 + fade * 0.6);
+            this.impact(at, voice, peak);
+            this.resonance(at, voice, 1.15 - i * 0.12 + Math.random() * 0.12, peak);
+        }
     }
     playFootstep(surface, volume = 1) {
         const voice = SURFACES[surface] ?? SURFACES.dirt;

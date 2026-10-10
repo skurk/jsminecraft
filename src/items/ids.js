@@ -19,4 +19,6 @@ export const Item = {
     Gunpowder: 207,
     Bone: 208,
     Arrow: 209,
+    Emerald: 210,
+    Bread: 211,
 };

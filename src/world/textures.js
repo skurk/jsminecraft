@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mulberry32 } from "../engine/noise.js";
 import { Tile } from "./blocks.js";
 export const TILE_PX = 16;
-export const ATLAS_COLS = 4;
+export const ATLAS_COLS = 8;
 export const ATLAS_ROWS = 8;
 function clamp255(v) {
     return Math.max(0, Math.min(255, Math.round(v)));
@@ -249,6 +249,204 @@ function paintCactusTop(ctx, rand) {
         }
     }
 }
+function paintPath(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.PathTop);
+    const packed = [150, 122, 86];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const rut = y % 7 === 3 || y % 11 === 8 ? -14 : 0;
+            const pebble = rand() < 0.06 ? 24 : 0;
+            px(ctx, ox + x, oy + y, shade(packed, rut + pebble + (rand() * 2 - 1) * 10));
+        }
+    }
+}
+function paintFarmland(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.Farmland);
+    const tilled = [96, 66, 42];
+    for (let y = 0; y < TILE_PX; y++) {
+        const furrow = y % 4 === 0 ? -24 : y % 4 === 1 ? 14 : 0;
+        for (let x = 0; x < TILE_PX; x++) {
+            px(ctx, ox + x, oy + y, shade(tilled, furrow + (rand() * 2 - 1) * 9));
+        }
+    }
+}
+/** Thin stalks topped with grain, on a transparent background. */
+function paintWheat(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.Wheat);
+    const grain = [222, 196, 86];
+    const husk = [176, 146, 52];
+    const stem = [150, 150, 70];
+    for (let i = 0; i < 4; i++) {
+        const column = 1 + i * 4;
+        const top = 1 + (i % 2);
+        const earEnd = top + 8;
+        for (let y = top; y < TILE_PX; y++) {
+            px(ctx, ox + column, oy + y, shade(y < earEnd ? husk : stem, (rand() * 2 - 1) * 10));
+        }
+        // Grain hangs off alternating sides of the stalk.
+        for (let y = top + 1; y < earEnd; y += 2) {
+            px(ctx, ox + column - 1, oy + y, shade(grain, (rand() * 2 - 1) * 12));
+            px(ctx, ox + column + 1, oy + y + 1, shade(grain, (rand() * 2 - 1) * 12));
+        }
+    }
+}
+function paintHayTop(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.HayTop);
+    const cut = [178, 148, 56];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const ring = x > 2 && x < 13 && y > 2 && y < 13 ? -18 : 0;
+            px(ctx, ox + x, oy + y, shade(cut, ring + (rand() * 2 - 1) * 16));
+        }
+    }
+}
+function paintHaySide(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.HaySide);
+    const straw = [190, 160, 60];
+    for (let y = 0; y < TILE_PX; y++) {
+        const band = y === 1 || y === 14 ? -40 : 0;
+        for (let x = 0; x < TILE_PX; x++) {
+            px(ctx, ox + x, oy + y, shade(straw, band + (rand() * 2 - 1) * 14));
+        }
+    }
+}
+function paintBedTop(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.BedTop);
+    const quilt = [170, 48, 48];
+    const pillow = [226, 226, 226];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const seam = y === 5 ? -40 : 0;
+            px(ctx, ox + x, oy + y, shade(y < 5 ? pillow : quilt, seam + (rand() * 2 - 1) * 10));
+        }
+    }
+}
+function paintBedSide(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.BedSide);
+    const quilt = [160, 44, 44];
+    const frame = [138, 104, 62];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            px(ctx, ox + x, oy + y, shade(y > 10 ? frame : quilt, (rand() * 2 - 1) * 10));
+        }
+    }
+}
+/** Pane edges only; the middle stays transparent. */
+function paintGlass(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.Glass);
+    const pane = [198, 226, 240];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const edge = x === 0 || y === 0 || x === TILE_PX - 1 || y === TILE_PX - 1;
+            const glint = x + y === 5 || x + y === 7 || x - y === 6;
+            if (!edge && !glint)
+                continue;
+            px(ctx, ox + x, oy + y, shade(pane, edge ? -36 : 16 + (rand() * 2 - 1) * 6));
+        }
+    }
+}
+function paintStoneBricks(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.StoneBricks);
+    const brick = [122, 122, 118];
+    for (let y = 0; y < TILE_PX; y++) {
+        const row = Math.floor(y / 8);
+        for (let x = 0; x < TILE_PX; x++) {
+            const shifted = (x + row * 8) % 16;
+            const mortar = y % 8 === 0 || shifted === 0 ? -34 : 0;
+            px(ctx, ox + x, oy + y, shade(brick, mortar + (rand() * 2 - 1) * 9));
+        }
+    }
+}
+function paintComposterTop(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.ComposterTop);
+    const wood = [146, 112, 66];
+    const compost = [96, 118, 48];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const inside = x > 2 && x < 13 && y > 2 && y < 13;
+            px(ctx, ox + x, oy + y, shade(inside ? compost : wood, (rand() * 2 - 1) * 14));
+        }
+    }
+}
+function paintComposterSide(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.ComposterSide);
+    const wood = [150, 116, 68];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const slat = y % 5 === 0 ? -34 : 0;
+            const post = x < 2 || x > 13 ? -18 : 0;
+            px(ctx, ox + x, oy + y, shade(wood, slat + post + (rand() * 2 - 1) * 8));
+        }
+    }
+}
+function paintSmithingTop(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.SmithingTop);
+    const iron = [96, 100, 110];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const anvil = x > 3 && x < 12 && y > 4 && y < 11 ? 32 : 0;
+            px(ctx, ox + x, oy + y, shade(iron, anvil + (rand() * 2 - 1) * 10));
+        }
+    }
+}
+function paintSmithingSide(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.SmithingSide);
+    const wood = [92, 70, 54];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const top = y < 4 ? 26 : 0;
+            const leg = (x > 1 && x < 4) || (x > 11 && x < 14) ? -22 : 0;
+            px(ctx, ox + x, oy + y, shade(wood, top + leg + (rand() * 2 - 1) * 8));
+        }
+    }
+}
+function paintFletchingTop(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.FletchingTop);
+    const wood = [168, 138, 92];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            // Two crossed arrows scratched into the bench.
+            const cross = Math.abs(x - y) < 2 || Math.abs(x + y - 15) < 2 ? -36 : 0;
+            px(ctx, ox + x, oy + y, shade(wood, cross + (rand() * 2 - 1) * 8));
+        }
+    }
+}
+function paintFletchingSide(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.FletchingSide);
+    const wood = [160, 130, 86];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const top = y < 3 ? -30 : 0;
+            const fletch = y > 5 && y < 12 && x % 5 === 2 ? -26 : 0;
+            px(ctx, ox + x, oy + y, shade(wood, top + fletch + (rand() * 2 - 1) * 8));
+        }
+    }
+}
+function paintBellTop(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.BellTop);
+    const beam = [118, 88, 56];
+    const gold = [214, 176, 64];
+    const center = (TILE_PX - 1) / 2;
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const cap = Math.hypot(x - center, y - center) < 4;
+            px(ctx, ox + x, oy + y, shade(cap ? gold : beam, (rand() * 2 - 1) * 10));
+        }
+    }
+}
+function paintBellSide(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.BellSide);
+    const beam = [118, 88, 56];
+    const gold = [206, 168, 60];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            // Bell body flares out towards the bottom.
+            const halfWidth = 2 + Math.floor(y * 0.3);
+            const bell = y > 2 && Math.abs(x - 7.5) < halfWidth;
+            px(ctx, ox + x, oy + y, shade(bell ? gold : beam, (rand() * 2 - 1) * 10));
+        }
+    }
+}
 function buildAtlasCanvas() {
     const canvas = document.createElement('canvas');
     canvas.width = ATLAS_COLS * TILE_PX;
@@ -288,6 +486,23 @@ function buildAtlasCanvas() {
     paintFoliage(ctx, Tile.TropicalLeaves, [48, 146, 60], 0.2, rand);
     paintCactusSide(ctx, rand);
     paintCactusTop(ctx, rand);
+    paintPath(ctx, rand);
+    paintFarmland(ctx, rand);
+    paintWheat(ctx, rand);
+    paintHayTop(ctx, rand);
+    paintHaySide(ctx, rand);
+    paintBedTop(ctx, rand);
+    paintBedSide(ctx, rand);
+    paintGlass(ctx, rand);
+    paintStoneBricks(ctx, rand);
+    paintComposterTop(ctx, rand);
+    paintComposterSide(ctx, rand);
+    paintSmithingTop(ctx, rand);
+    paintSmithingSide(ctx, rand);
+    paintFletchingTop(ctx, rand);
+    paintFletchingSide(ctx, rand);
+    paintBellTop(ctx, rand);
+    paintBellSide(ctx, rand);
     return canvas;
 }
 export const atlasCanvas = buildAtlasCanvas();

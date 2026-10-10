@@ -1,6 +1,11 @@
 /** Two taps of forward inside this window start a sprint. */
 const DOUBLE_TAP_MS = 280;
 const ATTACK_KEYS = ['ControlLeft', 'ControlRight'];
+/** Browsers can report a huge bogus delta right after locking; anything past this is noise. */
+const MAX_MOVE_PER_EVENT = 300;
+function clampMove(amount) {
+    return Math.max(-MAX_MOVE_PER_EVENT, Math.min(MAX_MOVE_PER_EVENT, amount));
+}
 export class Input {
     keys = new Set();
     buttons = new Set();
@@ -15,9 +20,14 @@ export class Input {
     onScroll = null;
     onLockChange = null;
     element;
+    skipNextMove = false;
     constructor(element) {
         this.element = element;
         window.addEventListener('keydown', (event) => {
+            if (event.code === 'Space' || event.code.startsWith('Arrow'))
+                event.preventDefault();
+            // Auto-repeat still refreshes the held set, so a key survives a mid-press clear.
+            this.keys.add(event.code);
             if (event.repeat)
                 return;
             if (event.code === 'KeyW') {
@@ -26,14 +36,11 @@ export class Input {
                     this.sprintLatch = true;
                 this.lastForwardTap = now;
             }
-            this.keys.add(event.code);
             this.onKeyPress?.(event.code);
             // Ctrl stands in for the left mouse button, so it swings on press
             // and keeps mining while held.
             if (this.locked && ATTACK_KEYS.includes(event.code))
                 this.onMouseDown?.(0);
-            if (event.code === 'Space' || event.code.startsWith('Arrow'))
-                event.preventDefault();
         });
         window.addEventListener('keyup', (event) => {
             if (event.code === 'KeyW')
@@ -43,7 +50,13 @@ export class Input {
         window.addEventListener('blur', () => this.releaseAll());
         document.addEventListener('pointerlockchange', () => {
             this.locked = document.pointerLockElement === this.element;
-            if (!this.locked) {
+            if (this.locked) {
+                // The first move after locking carries the jump from the cursor's old position.
+                this.skipNextMove = true;
+                this.mouseDeltaX = 0;
+                this.mouseDeltaY = 0;
+            }
+            else {
                 this.releaseAll();
                 this.buttons.clear();
             }
@@ -52,8 +65,12 @@ export class Input {
         this.element.addEventListener('mousemove', (event) => {
             if (!this.locked)
                 return;
-            this.mouseDeltaX += event.movementX;
-            this.mouseDeltaY += event.movementY;
+            if (this.skipNextMove) {
+                this.skipNextMove = false;
+                return;
+            }
+            this.mouseDeltaX += clampMove(event.movementX);
+            this.mouseDeltaY += clampMove(event.movementY);
         });
         this.element.addEventListener('mousedown', (event) => {
             if (!this.locked) {

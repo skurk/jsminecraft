@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { moveBody } from "../engine/physics.js";
 import { blockCubeGeometry } from "../items/blockmodel.js";
-import { isBlockItem, itemTexture } from "../items/items.js";
+import { isSpriteModel, itemTexture } from "../items/items.js";
+import { Block } from "../world/blocks.js";
 import { atlasTexture } from "../world/textures.js";
 const ITEM_SIZE = 0.3;
 const GRAVITY = -24;
@@ -147,15 +148,18 @@ export class ItemManager {
         return material;
     }
     create(itemId, x, y, z) {
-        const block = isBlockItem(itemId);
-        const geometry = block ? blockCubeGeometry(itemId, ITEM_SIZE) : itemSpriteGeometry();
-        const material = block ? this.material : this.spriteMaterial(itemId);
+        const sprite = isSpriteModel(itemId);
+        const geometry = sprite ? itemSpriteGeometry() : blockCubeGeometry(itemId, ITEM_SIZE);
+        const material = sprite ? this.spriteMaterial(itemId) : this.material;
         const drop = new ItemDrop(itemId, new THREE.Vector3(x, y, z), material, geometry);
         this.drops.push(drop);
         this.scene.add(drop.mesh);
         return drop;
     }
     spawn(itemId, x, y, z) {
+        // Blocks like glass shatter into nothing; an "Air" stack is not a real item.
+        if (itemId === Block.Air)
+            return;
         if (this.drops.length >= MAX_DROPS)
             return;
         this.create(itemId, x, y, z);

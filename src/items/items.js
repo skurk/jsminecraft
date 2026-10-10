@@ -26,9 +26,15 @@ export const ITEMS = {
     [Item.Gunpowder]: { name: 'Gunpowder', color: 0x9a9a92, tool: null, sprite: true },
     [Item.Bone]: { name: 'Bone', color: 0xe6e3d4, tool: null, sprite: true },
     [Item.Arrow]: { name: 'Arrow', color: 0xb8b8b8, tool: null, sprite: true },
+    [Item.Emerald]: { name: 'Emerald', color: 0x2ecc71, tool: null, sprite: true },
+    [Item.Bread]: { name: 'Bread', color: 0xc08a4a, tool: null, food: { heal: 4, sickness: 0 } },
 };
 export function isBlockItem(id) {
     return id < 100;
+}
+/** Cross-shaped blocks such as wheat read as flat sprites, not cubes, once harvested. */
+export function isSpriteModel(id) {
+    return !isBlockItem(id) || BLOCKS[id].cross === true;
 }
 /** Items that pile up in a stack and need a count badge. */
 export function isStackable(id) {

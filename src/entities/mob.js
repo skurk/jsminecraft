@@ -362,7 +362,7 @@ export class Mob {
         if (this.deathTimer >= DEATH_DURATION)
             this.dead = true;
     }
-    update(dt, world, player, dark, daylight, difficulty) {
+    update(dt, world, player, dark, daylight, difficulty, prey = null) {
         this.attackTimer = Math.max(0, this.attackTimer - dt);
         this.hurtTimer = Math.max(0, this.hurtTimer - dt);
         if (this.dying) {
@@ -389,8 +389,14 @@ export class Mob {
         }
         const toPlayer = player.position.clone().sub(this.position);
         const distance = toPlayer.length();
+        // Villagers are hunted like the player, but creepers and bows stay fixed on the
+        // player so their own range checks are unaffected.
+        const preyDistance = prey && prey.health > 0 ? prey.position.distanceTo(this.position) : Infinity;
+        const victim = preyDistance < distance ? prey : player;
+        const toVictim = victim === player ? toPlayer : victim.position.clone().sub(this.position);
+        const victimDistance = Math.min(distance, preyDistance);
         const hostile = !this.type.passive && (this.type.alwaysHostile || dark);
-        const chasing = hostile && distance < difficulty.aggroRange && player.health > 0;
+        const chasing = hostile && victimDistance < difficulty.aggroRange && victim.health > 0;
         const fleeing = this.fleeTimer > 0;
         this.fleeTimer = Math.max(0, this.fleeTimer - dt);
         this.updateEgg(dt);
@@ -420,9 +426,9 @@ export class Mob {
             dirZ = 0;
         }
         else if (chasing) {
-            const flat = Math.hypot(toPlayer.x, toPlayer.z) || 1;
-            dirX = toPlayer.x / flat;
-            dirZ = toPlayer.z / flat;
+            const flat = Math.hypot(toVictim.x, toVictim.z) || 1;
+            dirX = toVictim.x / flat;
+            dirZ = toVictim.z / flat;
         }
         else if (fleeing) {
             // Keep heading directly away from the player, so chasing does not corner it.
@@ -479,11 +485,11 @@ export class Mob {
         }
         if (chasing && this.attackTimer === 0) {
             const reach = this.radius + 0.45;
-            if (Math.hypot(toPlayer.x, toPlayer.z) < reach && Math.abs(toPlayer.y) < this.height + 0.5) {
-                if (player.damage(this.type.damage * difficulty.damageMultiplier)) {
+            if (Math.hypot(toVictim.x, toVictim.z) < reach && Math.abs(toVictim.y) < this.height + 0.5) {
+                if (victim.damage(this.type.damage * difficulty.damageMultiplier)) {
                     this.attackTimer = difficulty.attackCooldown;
-                    const flat = Math.hypot(toPlayer.x, toPlayer.z) || 1;
-                    player.applyKnockback((toPlayer.x / flat) * 5, (toPlayer.z / flat) * 5, 4.5);
+                    const flat = Math.hypot(toVictim.x, toVictim.z) || 1;
+                    victim.applyKnockback((toVictim.x / flat) * 5, (toVictim.z / flat) * 5, 4.5);
                 }
             }
         }

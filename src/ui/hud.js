@@ -120,6 +120,7 @@ export class Hud {
       <li><b>Hold left click</b> or <b>Ctrl</b> mine &middot; <b>Left click</b> attack &middot; <b>Right click</b> place / use</li>
       <li><b>1-9</b> or <b>scroll</b> select slot &middot; <b>E</b> inventory &amp; crafting &middot; <b>F</b> flight &middot; <b>Esc</b> release cursor</li>
       <li>Mine logs, craft planks and sticks, then place a crafting table for tools.</li>
+      <li>Find a village: <b>right click</b> a villager to trade, and feed them bread to grow the village.</li>
       <li class="warn">Zombies and spiders spawn in the dark &mdash; stay in the light.</li>`;
         panel.appendChild(controls);
         this.overlay.appendChild(panel);

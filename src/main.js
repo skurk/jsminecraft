@@ -6,26 +6,30 @@ import { audio } from "./engine/audio.js";
 import { Sky } from "./engine/sky.js";
 import { Weather } from "./engine/weather.js";
 import { Explosions } from "./engine/explosion.js";
+import { Particles } from "./engine/particles.js";
 import { ItemManager } from "./entities/item.js";
 import { MobManager } from "./entities/mobs.js";
+import { VillagerManager } from "./entities/villagers.js";
 import { CHICKEN } from "./entities/mob.js";
 import { Item, foodOf, isBlockItem, isStackable, toolOf } from "./items/items.js";
 import { Hand } from "./player/hand.js";
 import { HOTBAR_SIZE, Hotbar } from "./player/hotbar.js";
 import { Inventory } from "./player/inventory.js";
 import { Player } from "./player/player.js";
-import { BLOCKS, Block, blockSurface, isBreakable, isLava, isWater } from "./world/blocks.js";
+import { BLOCKS, Block, blockSurface, isBreakable, isLava, isLog, isPlaceable, isWater } from "./world/blocks.js";
 import { CHUNK_SIZE } from "./world/chunk.js";
 import { SEA_LEVEL, biomeNameAt, terrainHeight } from "./world/terrain.js";
 import { updateFluidAnimation } from "./world/textures.js";
 import { World, raycast } from "./world/world.js";
 import { Hud } from "./ui/hud.js";
 import { InventoryScreen } from "./ui/inventory.js";
+import { TradeScreen } from "./ui/trade.js";
 const RENDER_DISTANCE = 6;
 const REACH = 6;
 const PHYSICS_TICK = 0.08;
 const FIST_DAMAGE = 2;
 const ATTACK_COOLDOWN = 0.35;
+const GLASS_SHARD_COLOR = 0xcfe6f2;
 const MINE_SWING_INTERVAL = 0.3;
 const EAT_COOLDOWN = 0.8;
 /** Chance a thrown egg hatches where it lands. */
@@ -62,6 +66,8 @@ weather.onStrike = (distance) => audio.playThunder(distance);
 const explosions = new Explosions(scene);
 const mobs = new MobManager(scene, world);
 const items = new ItemManager(scene, world);
+const villagers = new VillagerManager(scene, world);
+const particles = new Particles(scene);
 mobs.onDropItem = (id, x, y, z) => items.spawn(id, x, y, z);
 mobs.onShoot = (origin, direction, damage) => items.throwItem(Item.Arrow, origin, direction, { speed: 26, hurts: damage, lift: 0 });
 mobs.onExplode = (position, power) => explosions.spawn(position, power);
@@ -108,6 +114,7 @@ highlight.visible = false;
 scene.add(highlight);
 const hud = new Hud(hudRoot, HOTBAR_SIZE);
 const menu = new InventoryScreen(hudRoot, inventory, hotbar);
+const trade = new TradeScreen(hudRoot, inventory);
 const input = new Input(renderer.domElement);
 // Browsers only let an AudioContext start from a user gesture, and suspend it
 // again when the tab sleeps, so every gesture gets a chance to revive it.
@@ -115,7 +122,7 @@ const wakeAudio = () => audio.resume();
 window.addEventListener('pointerdown', wakeAudio);
 window.addEventListener('keydown', wakeAudio);
 hudRoot.addEventListener('mousedown', (event) => {
-    if (menu.open)
+    if (menu.open || trade.open)
         return;
     event.preventDefault();
     void input.requestLock();
@@ -125,13 +132,18 @@ function refreshHotbar() {
     hud.setSelected(hotbar.selected);
 }
 function updateOverlay() {
-    hud.setOverlayVisible(!input.locked && !menu.open);
+    hud.setOverlayVisible(!input.locked && !menu.open && !trade.open);
 }
 menu.onClose = () => {
     updateOverlay();
     void input.requestLock();
 };
 menu.onChange = refreshHotbar;
+trade.onClose = () => {
+    updateOverlay();
+    void input.requestLock();
+};
+trade.onChange = refreshHotbar;
 input.onLockChange = updateOverlay;
 let difficulty = DIFFICULTIES[DEFAULT_DIFFICULTY];
 mobs.setDifficulty(difficulty);
@@ -147,9 +159,34 @@ function openMenu(atTable) {
     document.exitPointerLock();
     updateOverlay();
 }
+function openTrade(villager) {
+    trade.show(villager);
+    document.exitPointerLock();
+    updateOverlay();
+}
+/** Bread feeds a villager, otherwise the use key opens their trades. */
+function useOnVillager(villager) {
+    if (heldItem() === Item.Bread && !villager.baby) {
+        if (!villager.feed()) {
+            hud.showToast(`${villager.name} is not hungry`);
+            return;
+        }
+        inventory.take(Item.Bread);
+        refreshHotbar();
+        hud.showToast(`${villager.name} looks willing`);
+        return;
+    }
+    if (!villager.canTrade) {
+        hud.showToast(`${villager.name}: "Hrmm."`);
+        return;
+    }
+    openTrade(villager);
+}
 input.onKeyPress = (code) => {
     if (code === 'KeyE') {
-        if (menu.open)
+        if (trade.open)
+            trade.close();
+        else if (menu.open)
             menu.close();
         else
             openMenu(false);
@@ -183,7 +220,7 @@ function breakSeconds(blockId, toolId) {
     return (def.hardness * HARDNESS_SECONDS) / speed;
 }
 input.onMouseDown = (button) => {
-    if (player.health <= 0 || menu.open)
+    if (player.health <= 0 || menu.open || trade.open)
         return;
     const direction = forwardVector();
     const eye = player.eyePosition;
@@ -194,13 +231,25 @@ input.onMouseDown = (button) => {
         if (attackTimer > 0)
             return;
         const target = mobs.raycast(eye, direction, REACH);
-        if (target && target.distance < blockDistance) {
+        const villager = villagers.raycast(eye, direction, REACH);
+        const damage = toolOf(heldItem())?.damage ?? FIST_DAMAGE;
+        const knockback = direction.clone().setY(0).normalize();
+        const mobFirst = (target?.distance ?? Infinity) <= (villager?.distance ?? Infinity);
+        if (target && mobFirst && target.distance < blockDistance) {
             attackTimer = ATTACK_COOLDOWN;
-            const damage = toolOf(heldItem())?.damage ?? FIST_DAMAGE;
-            target.mob.hurt(damage, direction.clone().setY(0).normalize());
+            target.mob.hurt(damage, knockback);
+        }
+        else if (villager && villager.distance < blockDistance) {
+            attackTimer = ATTACK_COOLDOWN;
+            villager.villager.hurt(damage, knockback);
         }
     }
     else if (button === 2) {
+        const villager = villagers.raycast(eye, direction, REACH);
+        if (villager && villager.distance < blockDistance) {
+            useOnVillager(villager.villager);
+            return;
+        }
         const targetedBlock = hit ? world.getBlock(hit.block.x, hit.block.y, hit.block.z) : Block.Air;
         if (targetedBlock === Block.CraftingTable) {
             openMenu(true);
@@ -234,7 +283,7 @@ input.onMouseDown = (button) => {
         if (!hit)
             return;
         const blockId = hotbar.item;
-        if (blockId === null || !isBlockItem(blockId))
+        if (blockId === null || !isBlockItem(blockId) || !isPlaceable(blockId))
             return;
         const target = hit.block.clone().add(hit.normal);
         if (!overlapsPlayer(target) && inventory.take(blockId)) {
@@ -245,7 +294,7 @@ input.onMouseDown = (button) => {
 };
 const mining = { block: null, progress: 0, swingTimer: 0 };
 function updateMining(dt) {
-    const active = input.locked && !menu.open && input.isMouseDown(0) && player.health > 0;
+    const active = input.locked && !menu.open && !trade.open && input.isMouseDown(0) && player.health > 0;
     const hit = active ? raycast(world, player.eyePosition, forwardVector(), REACH) : null;
     const blockId = hit ? world.getBlock(hit.block.x, hit.block.y, hit.block.z) : Block.Air;
     // A mob in the way is attacked instead of mining whatever is behind it.
@@ -277,6 +326,15 @@ function updateMining(dt) {
     const def = BLOCKS[blockId];
     const toolMatches = toolOf(tool)?.kind === def.tool;
     world.setBlock(hit.block.x, hit.block.y, hit.block.z, Block.Air);
+    if (isLog(blockId))
+        audio.playTumble();
+    if (blockId === Block.Glass) {
+        particles.burst(GLASS_SHARD_COLOR, hit.block.x + 0.5, hit.block.y + 0.5, hit.block.z + 0.5);
+        audio.playGlassBreak();
+    }
+    else if (blockId === Block.Wheat) {
+        audio.playCropBreak();
+    }
     if (!def.requiresTool || toolMatches) {
         items.spawn(def.drop, hit.block.x + 0.5, hit.block.y + 0.2, hit.block.z + 0.5);
     }
@@ -340,6 +398,8 @@ function updateAtmosphere(dt) {
     }
     world.setDaylight(brightness);
     mobs.setDaylight(brightness);
+    villagers.setDaylight(brightness);
+    particles.setDaylight(brightness);
     items.setDaylight(brightness);
     hand.setDaylight(brightness);
     sky.setVisible(!underwater && !inLava);
@@ -383,7 +443,8 @@ function animate() {
             world.tickPhysics();
         }
         player.update(dt, input, world);
-        mobs.update(dt, player, day);
+        mobs.update(dt, player, day, villagers);
+        villagers.update(dt, player, day, mobs.mobs);
         items.update(dt, player, inventory);
         weather.update(dt, player, world, day);
     }
@@ -391,6 +452,7 @@ function animate() {
     audio.setRain(running && weather.falling && !weather.cold ? weather.intensity : 0);
     audio.setUnderwater(running && player.submerged ? 1 : 0);
     explosions.update(dt);
+    particles.update(dt);
     updateMining(dt);
     updateHeldItem();
     hand.update(dt);
@@ -425,8 +487,10 @@ function animate() {
         refreshHotbar();
         if (menu.open)
             menu.refresh();
+        if (trade.open)
+            trade.refresh();
         hud.setDebug(`${fps.toFixed(0)} fps | xyz ${p.x.toFixed(1)} ${p.y.toFixed(1)} ${p.z.toFixed(1)} | ` +
-            `chunks ${world.chunks.size} | mobs ${mobs.mobs.length} | items ${items.count} | ` +
+            `chunks ${world.chunks.size} | mobs ${mobs.mobs.length} | villagers ${villagers.villagers.length} | items ${items.count} | ` +
             `${biomeNameAt(Math.floor(p.x), Math.floor(p.z))} | ${weather.label} | ` +
             `${day.clock} ${day.isNight ? 'night' : 'day'} | ${difficulty.name}`);
     }

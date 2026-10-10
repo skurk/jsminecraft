@@ -69,7 +69,7 @@ export class MobManager {
         // Kept bright enough to read as a hit flash even at midnight.
         this.hurtMaterial.color.setRGB(Math.min(1, brightness + 0.45), brightness * 0.18, brightness * 0.18);
     }
-    update(dt, player, day) {
+    update(dt, player, day, prey = null) {
         const night = day.isNight;
         const daylight = !night;
         this.spawnTimer += dt;
@@ -97,7 +97,7 @@ export class MobManager {
             if (distance > MOB_SIMULATION_DISTANCE)
                 continue;
             const dark = this.isDark(mob.position, night);
-            mob.update(dt, this.world, player, dark, daylight, this.difficulty);
+            mob.update(dt, this.world, player, dark, daylight, this.difficulty, prey?.nearestPrey(mob.position, this.difficulty.aggroRange) ?? null);
             if (mob.pendingEgg) {
                 mob.pendingEgg = false;
                 this.onDropItem?.(Item.Egg, mob.position.x, mob.position.y + 0.3, mob.position.z);
@@ -245,7 +245,7 @@ export class MobManager {
     }
 }
 /** Slab-method ray/AABB intersection; returns the entry distance or null. */
-function rayBoxDistance(origin, direction, min, max) {
+export function rayBoxDistance(origin, direction, min, max) {
     let near = 0;
     let far = Infinity;
     for (const axis of ['x', 'y', 'z']) {

@@ -26,7 +26,10 @@ function buildRain() {
         depthWrite: false,
         fog: false,
     });
-    return new THREE.LineSegments(geometry, material);
+    const rain = new THREE.LineSegments(geometry, material);
+    // The volume is rewritten every frame, so its bounding sphere is never valid.
+    rain.frustumCulled = false;
+    return rain;
 }
 function buildSnow() {
     const geometry = new THREE.BufferGeometry();
@@ -40,13 +43,16 @@ function buildSnow() {
         depthWrite: false,
         fog: false,
     });
-    return new THREE.Points(geometry, material);
+    const snow = new THREE.Points(geometry, material);
+    snow.frustumCulled = false;
+    return snow;
 }
 function buildBolt() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BOLT_SEGMENTS * 6), 3));
     const material = new THREE.LineBasicMaterial({ color: 0xf2f6ff, fog: false, depthWrite: false });
     const bolt = new THREE.LineSegments(geometry, material);
+    bolt.frustumCulled = false;
     bolt.visible = false;
     return bolt;
 }

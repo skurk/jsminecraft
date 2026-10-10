@@ -39,6 +39,18 @@ export const Block = {
     LavaFlow2: 36,
     LavaFlow3: 37,
     LavaFlow4: 38,
+    // Village blocks.
+    Path: 39,
+    Farmland: 40,
+    Wheat: 41,
+    Hay: 42,
+    Bed: 43,
+    Glass: 44,
+    StoneBricks: 45,
+    Composter: 46,
+    SmithingTable: 47,
+    FletchingTable: 48,
+    Bell: 49,
 };
 /** Index into the procedurally generated texture atlas. */
 export const Tile = {
@@ -74,6 +86,23 @@ export const Tile = {
     TropicalLeaves: 29,
     CactusSide: 30,
     CactusTop: 31,
+    PathTop: 32,
+    Farmland: 33,
+    Wheat: 34,
+    HayTop: 35,
+    HaySide: 36,
+    BedTop: 37,
+    BedSide: 38,
+    Glass: 39,
+    StoneBricks: 40,
+    ComposterTop: 41,
+    ComposterSide: 42,
+    SmithingTop: 43,
+    SmithingSide: 44,
+    FletchingTop: 45,
+    FletchingSide: 46,
+    BellTop: 47,
+    BellSide: 48,
 };
 export const BLOCKS = [
     {
@@ -390,6 +419,136 @@ for (let level = 1; level <= MAX_LAVA_SPREAD; level++) {
         drop: Block.Air,
     });
 }
+// Village building materials, crops and job site blocks. Must stay last so the
+// array indices keep matching the Block ids above.
+BLOCKS.push({
+    name: 'Dirt Path',
+    solid: true,
+    liquid: false,
+    top: Tile.PathTop,
+    side: Tile.Dirt,
+    bottom: Tile.Dirt,
+    hardness: 0.65,
+    tool: 'shovel',
+    requiresTool: false,
+    drop: Block.Dirt,
+}, {
+    name: 'Farmland',
+    solid: true,
+    liquid: false,
+    top: Tile.Farmland,
+    side: Tile.Dirt,
+    bottom: Tile.Dirt,
+    hardness: 0.6,
+    tool: 'shovel',
+    requiresTool: false,
+    drop: Block.Dirt,
+}, {
+    name: 'Wheat',
+    solid: false,
+    liquid: false,
+    top: Tile.Wheat,
+    side: Tile.Wheat,
+    bottom: Tile.Wheat,
+    hardness: 0.1,
+    tool: null,
+    requiresTool: false,
+    drop: Block.Wheat,
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
+}, {
+    name: 'Hay Bale',
+    solid: true,
+    liquid: false,
+    top: Tile.HayTop,
+    side: Tile.HaySide,
+    bottom: Tile.HayTop,
+    hardness: 0.5,
+    tool: null,
+    requiresTool: false,
+    drop: Block.Hay,
+}, {
+    name: 'Bed',
+    solid: true,
+    liquid: false,
+    top: Tile.BedTop,
+    side: Tile.BedSide,
+    bottom: Tile.Planks,
+    hardness: 0.2,
+    tool: null,
+    requiresTool: false,
+    drop: Block.Bed,
+}, {
+    name: 'Glass',
+    solid: true,
+    liquid: false,
+    top: Tile.Glass,
+    side: Tile.Glass,
+    bottom: Tile.Glass,
+    hardness: 0.3,
+    tool: null,
+    requiresTool: false,
+    drop: Block.Air,
+    full: false,
+    cutout: true,
+}, {
+    name: 'Stone Bricks',
+    solid: true,
+    liquid: false,
+    top: Tile.StoneBricks,
+    side: Tile.StoneBricks,
+    bottom: Tile.StoneBricks,
+    hardness: 1.5,
+    tool: 'pickaxe',
+    requiresTool: true,
+    drop: Block.StoneBricks,
+}, {
+    name: 'Composter',
+    solid: true,
+    liquid: false,
+    top: Tile.ComposterTop,
+    side: Tile.ComposterSide,
+    bottom: Tile.Planks,
+    hardness: 0.6,
+    tool: 'axe',
+    requiresTool: false,
+    drop: Block.Composter,
+}, {
+    name: 'Smithing Table',
+    solid: true,
+    liquid: false,
+    top: Tile.SmithingTop,
+    side: Tile.SmithingSide,
+    bottom: Tile.Planks,
+    hardness: 2.5,
+    tool: 'axe',
+    requiresTool: false,
+    drop: Block.SmithingTable,
+}, {
+    name: 'Fletching Table',
+    solid: true,
+    liquid: false,
+    top: Tile.FletchingTop,
+    side: Tile.FletchingSide,
+    bottom: Tile.Planks,
+    hardness: 2.5,
+    tool: 'axe',
+    requiresTool: false,
+    drop: Block.FletchingTable,
+}, {
+    name: 'Bell',
+    solid: true,
+    liquid: false,
+    top: Tile.BellTop,
+    side: Tile.BellSide,
+    bottom: Tile.BellSide,
+    hardness: 3,
+    tool: 'pickaxe',
+    requiresTool: true,
+    drop: Block.Bell,
+});
 const UNIT_BOX = [0, 0, 0, 1, 1, 1];
 /** False for blocks that do not fill their voxel, so neighbours keep their faces. */
 export function isFullBlock(id) {
@@ -397,6 +556,18 @@ export function isFullBlock(id) {
 }
 export function blockBox(id) {
     return BLOCKS[id].box ?? UNIT_BOX;
+}
+/** Alpha-tested blocks such as glass and crops. */
+export function isCutout(id) {
+    return BLOCKS[id].cutout === true;
+}
+/** Drawn as intersecting planes instead of a cube, like crops. */
+export function isCross(id) {
+    return BLOCKS[id].cross === true;
+}
+/** False for harvested goods that are carried but never put back in the world. */
+export function isPlaceable(id) {
+    return BLOCKS[id].placeable !== false;
 }
 export function blockLight(id) {
     return BLOCKS[id].light ?? 0;
@@ -489,4 +660,8 @@ export function isBreakable(id) {
 /** Blocks that fall when the space below them is free. */
 export function hasGravity(id) {
     return id === Block.Sand;
+}
+/** Tree stems, as opposed to worked wood like planks. */
+export function isLog(id) {
+    return id === Block.Log || id === Block.BirchLog || id === Block.PineLog;
 }

@@ -10,6 +10,7 @@ export class Chunk {
     voxels = new Uint8Array(VOLUME);
     dirty = true;
     solidMesh = null;
+    cutoutMesh = null;
     waterMesh = null;
     lavaMesh = null;
     constructor(cx, cz) {
@@ -26,13 +27,14 @@ export class Chunk {
         this.voxels[Chunk.index(x, y, z)] = id;
     }
     dispose(scene) {
-        for (const mesh of [this.solidMesh, this.waterMesh, this.lavaMesh]) {
+        for (const mesh of [this.solidMesh, this.cutoutMesh, this.waterMesh, this.lavaMesh]) {
             if (!mesh)
                 continue;
             scene.remove(mesh);
             mesh.geometry.dispose();
         }
         this.solidMesh = null;
+        this.cutoutMesh = null;
         this.waterMesh = null;
         this.lavaMesh = null;
     }
