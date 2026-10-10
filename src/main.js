@@ -3,6 +3,7 @@ import { DayCycle } from "./engine/daycycle.js";
 import { DEFAULT_DIFFICULTY, DIFFICULTIES } from "./engine/difficulty.js";
 import { Input } from "./engine/input.js";
 import { audio } from "./engine/audio.js";
+import { pushOutOfEntities } from "./engine/physics.js";
 import { Sky } from "./engine/sky.js";
 import { Weather } from "./engine/weather.js";
 import { Explosions } from "./engine/explosion.js";
@@ -445,6 +446,10 @@ function animate() {
         player.update(dt, input, world);
         mobs.update(dt, player, day, villagers);
         villagers.update(dt, player, day, mobs.mobs);
+        if (!player.dead) {
+            pushOutOfEntities(world, player, mobs.mobs);
+            pushOutOfEntities(world, player, villagers.villagers);
+        }
         items.update(dt, player, inventory);
         weather.update(dt, player, world, day);
     }
