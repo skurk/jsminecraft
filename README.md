@@ -8,7 +8,7 @@ Using three.js for swift and responsive graphics rendering.
 ![Screenshot](https://github.com/skurk/jsminecraft/blob/main/jsminecraft-screenshot.png?raw=true)
 
 ## Demo
-[Try the demo on Github](https://htmlpreview.github.io/?https://github.com/skurk/jsminecraft/blob/main/jsminecraft-standalone.html)
+[Try the demo on Github](https://htmlpreview.github.io/?https://raw.githubusercontent.com/skurk/jsminecraft/refs/heads/main/jsminecraft-standalone.html)
 
 ## Requirements
 - Modern web browser (Chrome, Firefox, Opera, Safari, Edge, etc)
