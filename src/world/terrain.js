@@ -225,6 +225,13 @@ function crownRadius(profile, dy) {
         return dy >= profile.top ? profile.radius - 1 : profile.radius;
     return dy >= 1 ? 1 : profile.radius;
 }
+/** Removes the clump standing on ground that is about to become something else. */
+function clearPlant(chunk, lx, y, lz) {
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE || y >= CHUNK_HEIGHT)
+        return;
+    if (chunk.get(lx, y, lz) === Block.TallGrass)
+        chunk.set(lx, y, lz, Block.Air);
+}
 /** Carves a shallow dish of lava into level ground. */
 function poolLava(chunk, baseX, baseZ, originX, originZ) {
     const level = terrainHeight(baseX, baseZ);
@@ -237,6 +244,7 @@ function poolLava(chunk, baseX, baseZ, originX, originZ) {
             if (terrainHeight(wx, wz) !== level)
                 continue;
             stamp(chunk, wx - originX, level, wz - originZ, Block.Lava, true);
+            clearPlant(chunk, wx - originX, level + 1, wz - originZ);
         }
     }
 }
@@ -279,7 +287,9 @@ export function generateChunk(chunk) {
                 }
                 chunk.set(lx, y, lz, id);
             }
-            if (chunk.get(lx, height, lz) === Block.Grass && grassAt(wx, wz, height, biome))
+            if (chunk.get(lx, height, lz) === Block.Grass &&
+                chunk.get(lx, height + 1, lz) === Block.Air &&
+                grassAt(wx, wz, height, biome))
                 chunk.set(lx, height + 1, lz, Block.TallGrass);
         }
     }
