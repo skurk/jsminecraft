@@ -22,14 +22,17 @@ Using three.js for swift and responsive graphics rendering.
 - Basic crafting
 - Villages with villagers (although no interaction yet)
 - Rudimentary sound effects (weather, walking, swimming, hit/use)
+- Automatically reduce render distance if fps<60 (min distance is configurable)
 
 ## Missing features
 - Ambient music
 - More enemies and animals
 - ...feel free to add the features you miss the most!
 
-## Won't happen
+## Probably not
 - Multiplayer/game servers
+
+## Won't happen
 - Load/save/continue function
 
 ## License
