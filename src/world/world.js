@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, hasGravity, isLava, isLiquid, isSolid, isWater, lavaFlowId, lavaLevel, waterFlowId, waterLevel } from "./blocks.js";
+import { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, canPlantStay, hasGravity, isLava, isLiquid, isPlant, isSolid, isWater, lavaFlowId, lavaLevel, nextCropStage, waterFlowId, waterLevel } from "./blocks.js";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey } from "./chunk.js";
 import { buildChunkGeometry, TORCH_RANGE } from "./mesher.js";
 import { generateChunk } from "./terrain.js";
@@ -9,6 +9,12 @@ const MAX_BUILDS_PER_FRAME = 3;
 // block for water and 30 for lava, against this game's 0.08s physics tick.
 const WATER_TICKS = 3;
 const LAVA_TICKS = 19;
+// Ticks a crop spends in each stage, so a field ripens in roughly one to two minutes.
+const CROP_MIN_TICKS = 220;
+const CROP_MAX_TICKS = 460;
+function cropTicks() {
+    return CROP_MIN_TICKS + Math.floor(Math.random() * (CROP_MAX_TICKS - CROP_MIN_TICKS));
+}
 const HORIZONTAL = [
     [1, 0],
     [-1, 0],
@@ -34,6 +40,8 @@ export class World {
     pendingUpdates = new Set();
     tickCount = 0;
     torches = new Map();
+    /** Position key to ticks left before the crop there moves to its next stage. */
+    growing = new Map();
     daylightUniform = { value: 1 };
     constructor(scene, renderDistance = 6) {
         this.scene = scene;
@@ -103,8 +111,12 @@ export class World {
             return;
         chunk.set(lx, y, lz, id);
         chunk.dirty = true;
+        const key = `${x},${y},${z}`;
+        if (nextCropStage(id) !== null)
+            this.growing.set(key, cropTicks());
+        else
+            this.growing.delete(key);
         if (previous === Block.Torch || id === Block.Torch) {
-            const key = `${x},${y},${z}`;
             if (id === Block.Torch)
                 this.torches.set(key, { x: x + 0.5, y: y + 0.35, z: z + 0.5 });
             else
@@ -131,6 +143,7 @@ export class World {
     /** Steps queued block updates by one voxel; call at a fixed rate. */
     tickPhysics() {
         this.tickCount++;
+        this.growCrops();
         if (this.pendingUpdates.size === 0)
             return;
         const waterDue = this.tickCount % WATER_TICKS === 0;
@@ -146,6 +159,10 @@ export class World {
         positions.sort((a, b) => a[1] - b[1]);
         for (const [x, y, z] of positions) {
             const id = this.getBlock(x, y, z);
+            if (isPlant(id) && !canPlantStay(id, this.getBlock(x, y - 1, z))) {
+                this.setBlock(x, y, z, Block.Air);
+                continue;
+            }
             if (hasGravity(id)) {
                 const below = this.getBlock(x, y - 1, z);
                 if (below !== Block.Air && !isLiquid(below))
@@ -167,6 +184,23 @@ export class World {
                 else
                     this.pendingUpdates.add(`${x},${y},${z}`);
             }
+        }
+    }
+    /** Counts planted crops down to their next stage. */
+    growCrops() {
+        for (const [key, remaining] of this.growing) {
+            if (remaining > 1) {
+                this.growing.set(key, remaining - 1);
+                continue;
+            }
+            const [x, y, z] = key.split(',').map(Number);
+            const next = nextCropStage(this.getBlock(x, y, z));
+            if (next === null) {
+                this.growing.delete(key);
+                continue;
+            }
+            // setBlock re-registers the new stage, or drops it once ripe.
+            this.setBlock(x, y, z, next);
         }
     }
     flowWater(x, y, z, id) {
@@ -327,6 +361,7 @@ export class World {
                 chunk.dispose(this.scene);
                 this.chunks.delete(chunkKey(chunk.cx, chunk.cz));
                 this.forgetTorches(chunk.cx, chunk.cz);
+                this.forgetCrops(chunk.cx, chunk.cz);
                 continue;
             }
             if (chunk.dirty && distSq <= r * r)
@@ -358,6 +393,14 @@ export class World {
         for (const [key, torch] of this.torches) {
             if (Math.floor(torch.x / CHUNK_SIZE) === cx && Math.floor(torch.z / CHUNK_SIZE) === cz)
                 this.torches.delete(key);
+        }
+    }
+    /** Crops in an unloaded chunk go with it, so they stop being ticked. */
+    forgetCrops(cx, cz) {
+        for (const key of this.growing.keys()) {
+            const [x, , z] = key.split(',').map(Number);
+            if (Math.floor(x / CHUNK_SIZE) === cx && Math.floor(z / CHUNK_SIZE) === cz)
+                this.growing.delete(key);
         }
     }
     scheduleUpdate(x, y, z) {

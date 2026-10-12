@@ -17,7 +17,7 @@ import { Hand } from "./player/hand.js";
 import { HOTBAR_SIZE, Hotbar } from "./player/hotbar.js";
 import { Inventory } from "./player/inventory.js";
 import { Player } from "./player/player.js";
-import { BLOCKS, Block, blockSurface, isBreakable, isLava, isLog, isPlaceable, isWater } from "./world/blocks.js";
+import { BLOCKS, Block, blockDrops, blockSurface, isBreakable, isCrop, isLava, isLog, isPlaceable, isSowable, isTillable, isWater } from "./world/blocks.js";
 import { CHUNK_SIZE } from "./world/chunk.js";
 import { SEA_LEVEL, biomeNameAt, terrainHeight } from "./world/terrain.js";
 import { updateFluidAnimation } from "./world/textures.js";
@@ -31,6 +31,14 @@ const PHYSICS_TICK = 0.08;
 const FIST_DAMAGE = 2;
 const ATTACK_COOLDOWN = 0.35;
 const GLASS_SHARD_COLOR = 0xcfe6f2;
+/** Debris colour for each plant, so a cut crop scatters its own blades or straw. */
+const PLANT_SHARD_COLORS = {
+    [Block.TallGrass]: 0x5c9e3e,
+    [Block.WheatSprout]: 0x6ea04a,
+    [Block.WheatYoung]: 0x6ea04a,
+    [Block.WheatTall]: 0x6ea04a,
+    [Block.Wheat]: 0xcea83c,
+};
 const MINE_SWING_INTERVAL = 0.3;
 const EAT_COOLDOWN = 0.8;
 /** Chance a thrown egg hatches where it lands. */
@@ -183,13 +191,38 @@ function useOnVillager(villager) {
     }
     openTrade(villager);
 }
+/** A hoe turns the grass or dirt you are looking at into farmland. */
+function tillSoil(hit) {
+    const soil = world.getBlock(hit.block.x, hit.block.y, hit.block.z);
+    if (!isTillable(soil) || hit.normal.y !== 1)
+        return;
+    if (world.getBlock(hit.block.x, hit.block.y + 1, hit.block.z) !== Block.Air)
+        return;
+    world.setBlock(hit.block.x, hit.block.y, hit.block.z, Block.Farmland);
+    audio.playHit('dirt');
+}
+/** Seeds take in farmland or plain grass, and start at the first sprout stage. */
+function sowSeeds(hit) {
+    const soil = world.getBlock(hit.block.x, hit.block.y, hit.block.z);
+    const target = hit.block.clone().add(hit.normal);
+    if (!isSowable(soil) || hit.normal.y !== 1) {
+        hud.showToast('Seeds need grass or farmland');
+        return;
+    }
+    if (world.getBlock(target.x, target.y, target.z) !== Block.Air)
+        return;
+    if (!inventory.take(Item.Seeds))
+        return;
+    world.setBlock(target.x, target.y, target.z, Block.WheatSprout);
+    refreshHotbar();
+}
 input.onKeyPress = (code) => {
-    if (code === 'KeyE') {
+    if (code === 'KeyE' || code === 'Escape') {
         if (trade.open)
             trade.close();
         else if (menu.open)
             menu.close();
-        else
+        else if (code === 'KeyE')
             openMenu(false);
         return;
     }
@@ -283,6 +316,14 @@ input.onMouseDown = (button) => {
         }
         if (!hit)
             return;
+        if (toolOf(held)?.kind === 'hoe') {
+            tillSoil(hit);
+            return;
+        }
+        if (held === Item.Seeds) {
+            sowSeeds(hit);
+            return;
+        }
         const blockId = hotbar.item;
         if (blockId === null || !isBlockItem(blockId) || !isPlaceable(blockId))
             return;
@@ -293,8 +334,7 @@ input.onMouseDown = (button) => {
         }
     }
 };
-const mining = { block: null, progress: 0, swingTimer: 0 };
-function updateMining(dt) {
+const mining = { block: null, progress: 0, swingTimer: 0 };function updateMining(dt) {
     const active = input.locked && !menu.open && !trade.open && input.isMouseDown(0) && player.health > 0;
     const hit = active ? raycast(world, player.eyePosition, forwardVector(), REACH) : null;
     const blockId = hit ? world.getBlock(hit.block.x, hit.block.y, hit.block.z) : Block.Air;
@@ -333,11 +373,13 @@ function updateMining(dt) {
         particles.burst(GLASS_SHARD_COLOR, hit.block.x + 0.5, hit.block.y + 0.5, hit.block.z + 0.5);
         audio.playGlassBreak();
     }
-    else if (blockId === Block.Wheat) {
+    else if (isCrop(blockId) || blockId === Block.TallGrass) {
         audio.playCropBreak();
+        particles.burst(PLANT_SHARD_COLORS[blockId], hit.block.x + 0.5, hit.block.y + 0.45, hit.block.z + 0.5, 12, 0.55);
     }
     if (!def.requiresTool || toolMatches) {
-        items.spawn(def.drop, hit.block.x + 0.5, hit.block.y + 0.2, hit.block.z + 0.5);
+        for (const drop of blockDrops(blockId))
+            items.spawn(drop, hit.block.x + 0.5, hit.block.y + 0.2, hit.block.z + 0.5);
     }
     mining.block = null;
     mining.progress = 0;

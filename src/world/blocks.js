@@ -51,6 +51,11 @@ export const Block = {
     SmithingTable: 47,
     FletchingTable: 48,
     Bell: 49,
+    // Plants. Wheat above is the ripe stage, which doubles as the harvested item.
+    TallGrass: 50,
+    WheatSprout: 51,
+    WheatYoung: 52,
+    WheatTall: 53,
 };
 /** Index into the procedurally generated texture atlas. */
 export const Tile = {
@@ -103,6 +108,10 @@ export const Tile = {
     FletchingSide: 46,
     BellTop: 47,
     BellSide: 48,
+    TallGrass: 49,
+    WheatSprout: 50,
+    WheatYoung: 51,
+    WheatTall: 52,
 };
 export const BLOCKS = [
     {
@@ -454,6 +463,7 @@ BLOCKS.push({
     tool: null,
     requiresTool: false,
     drop: Block.Wheat,
+    drops: [{ id: Block.Wheat }, { id: Item.Seeds, min: 0, max: 3 }],
     full: false,
     cutout: true,
     cross: true,
@@ -548,6 +558,68 @@ BLOCKS.push({
     tool: 'pickaxe',
     requiresTool: true,
     drop: Block.Bell,
+}, {
+    name: 'Grass',
+    solid: false,
+    liquid: false,
+    top: Tile.TallGrass,
+    side: Tile.TallGrass,
+    bottom: Tile.TallGrass,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Block.Air,
+    // One clump in eight gives up a seed, as in the Overworld.
+    drops: [{ id: Item.Seeds, chance: 0.125 }],
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
+}, {
+    name: 'Wheat Crop',
+    solid: false,
+    liquid: false,
+    top: Tile.WheatSprout,
+    side: Tile.WheatSprout,
+    bottom: Tile.WheatSprout,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Item.Seeds,
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
+}, {
+    name: 'Wheat Crop',
+    solid: false,
+    liquid: false,
+    top: Tile.WheatYoung,
+    side: Tile.WheatYoung,
+    bottom: Tile.WheatYoung,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Item.Seeds,
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
+}, {
+    name: 'Wheat Crop',
+    solid: false,
+    liquid: false,
+    top: Tile.WheatTall,
+    side: Tile.WheatTall,
+    bottom: Tile.WheatTall,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Item.Seeds,
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
 });
 const UNIT_BOX = [0, 0, 0, 1, 1, 1];
 /** False for blocks that do not fill their voxel, so neighbours keep their faces. */
@@ -568,6 +640,50 @@ export function isCross(id) {
 /** False for harvested goods that are carried but never put back in the world. */
 export function isPlaceable(id) {
     return BLOCKS[id].placeable !== false;
+}
+/** Wheat from sprout to ripe; only the last stage yields grain. */
+export const WHEAT_STAGES = [Block.WheatSprout, Block.WheatYoung, Block.WheatTall, Block.Wheat];
+export function isCrop(id) {
+    return WHEAT_STAGES.includes(id);
+}
+/** The stage a crop grows into, or null once it is ripe. */
+export function nextCropStage(id) {
+    const stage = WHEAT_STAGES.indexOf(id);
+    return stage >= 0 && stage < WHEAT_STAGES.length - 1 ? WHEAT_STAGES[stage + 1] : null;
+}
+export function isPlant(id) {
+    return id === Block.TallGrass || isCrop(id);
+}
+/** Plants pop off when the ground they need is taken away. */
+export function canPlantStay(id, soil) {
+    if (isCrop(id))
+        return soil === Block.Farmland || soil === Block.Grass;
+    if (id === Block.TallGrass)
+        return soil === Block.Grass || soil === Block.Dirt || soil === Block.Farmland;
+    return true;
+}
+/** Ground wheat seeds take root in; farmland is just the tended version. */
+export function isSowable(id) {
+    return id === Block.Farmland || id === Block.Grass;
+}
+/** Blocks a hoe turns into farmland. */
+export function isTillable(id) {
+    return id === Block.Grass || id === Block.Dirt;
+}
+/** Rolls what a broken block leaves behind; chance and count cover crops and grass. */
+export function blockDrops(id) {
+    const def = BLOCKS[id];
+    const spawned = [];
+    for (const entry of def.drops ?? [{ id: def.drop }]) {
+        if (entry.chance !== undefined && Math.random() >= entry.chance)
+            continue;
+        const count = entry.max === undefined
+            ? entry.count ?? 1
+            : entry.min + Math.floor(Math.random() * (entry.max - entry.min + 1));
+        for (let i = 0; i < count; i++)
+            spawned.push(entry.id);
+    }
+    return spawned;
 }
 export function blockLight(id) {
     return BLOCKS[id].light ?? 0;
@@ -622,6 +738,11 @@ export function isAir(id) {
 export function blockSurface(id) {
     switch (id) {
         case Block.Grass:
+        case Block.TallGrass:
+        case Block.Wheat:
+        case Block.WheatSprout:
+        case Block.WheatYoung:
+        case Block.WheatTall:
             return 'grass';
         case Block.Sand:
             return 'sand';

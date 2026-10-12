@@ -5,10 +5,12 @@ export const Item = {
     WoodShovel: 111,
     WoodPickaxe: 112,
     WoodAxe: 113,
+    WoodHoe: 114,
     StoneSword: 120,
     StoneShovel: 121,
     StonePickaxe: 122,
     StoneAxe: 123,
+    StoneHoe: 124,
     Apple: 200,
     RawChicken: 201,
     RawPork: 202,
@@ -21,4 +23,5 @@ export const Item = {
     Arrow: 209,
     Emerald: 210,
     Bread: 211,
+    Seeds: 212,
 };

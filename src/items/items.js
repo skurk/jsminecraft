@@ -11,10 +11,12 @@ export const ITEMS = {
     [Item.WoodShovel]: { name: 'Wooden Shovel', color: WOOD_HEAD, tool: { kind: 'shovel', speed: 3, damage: 2 } },
     [Item.WoodPickaxe]: { name: 'Wooden Pickaxe', color: WOOD_HEAD, tool: { kind: 'pickaxe', speed: 3, damage: 2 } },
     [Item.WoodAxe]: { name: 'Wooden Axe', color: WOOD_HEAD, tool: { kind: 'axe', speed: 3, damage: 3 } },
+    [Item.WoodHoe]: { name: 'Wooden Hoe', color: WOOD_HEAD, tool: { kind: 'hoe', speed: 1, damage: 2 } },
     [Item.StoneSword]: { name: 'Stone Sword', color: STONE_HEAD, tool: { kind: 'sword', speed: 1, damage: 7 } },
     [Item.StoneShovel]: { name: 'Stone Shovel', color: STONE_HEAD, tool: { kind: 'shovel', speed: 6, damage: 3 } },
     [Item.StonePickaxe]: { name: 'Stone Pickaxe', color: STONE_HEAD, tool: { kind: 'pickaxe', speed: 6, damage: 3 } },
     [Item.StoneAxe]: { name: 'Stone Axe', color: STONE_HEAD, tool: { kind: 'axe', speed: 6, damage: 4 } },
+    [Item.StoneHoe]: { name: 'Stone Hoe', color: STONE_HEAD, tool: { kind: 'hoe', speed: 1, damage: 2 } },
     [Item.Apple]: { name: 'Apple', color: 0xd4312a, tool: null, food: { heal: 4, sickness: 0 } },
     [Item.RawChicken]: { name: 'Raw Chicken', color: 0xf0bfae, tool: null, food: { heal: 3, sickness: 0 } },
     [Item.RawPork]: { name: 'Raw Porkchop', color: 0xf09a9a, tool: null, food: { heal: 5, sickness: 0 } },
@@ -28,6 +30,7 @@ export const ITEMS = {
     [Item.Arrow]: { name: 'Arrow', color: 0xb8b8b8, tool: null, sprite: true },
     [Item.Emerald]: { name: 'Emerald', color: 0x2ecc71, tool: null, sprite: true },
     [Item.Bread]: { name: 'Bread', color: 0xc08a4a, tool: null, food: { heal: 4, sickness: 0 } },
+    [Item.Seeds]: { name: 'Wheat Seeds', color: 0xb6b45c, tool: null, sprite: true },
 };
 export function isBlockItem(id) {
     return id < 100;
@@ -102,6 +105,10 @@ function drawToolIcon(ctx, size, id) {
         ctx.closePath();
         ctx.fill();
     }
+    else if (kind === 'hoe') {
+        ctx.fillRect(-0.3 * s, -0.42 * s, 0.34 * s, 0.1 * s);
+        ctx.fillRect(-0.3 * s, -0.42 * s, 0.1 * s, 0.2 * s);
+    }
     ctx.restore();
 }
 function hex(color) {
@@ -163,6 +170,20 @@ function drawFoodIcon(ctx, size, id) {
             for (const x of [-0.08, 0.08])
                 ellipse(ctx, x * s, y * s, s * 0.075, s * 0.075, base);
         ctx.restore();
+        return;
+    }
+    if (id === Item.Seeds) {
+        const base = hex(ITEMS[id].color);
+        // A scatter of husked grains.
+        for (const [x, y, angle] of [[0.38, 0.6, -0.5], [0.58, 0.66, 0.4], [0.5, 0.42, 0.2], [0.66, 0.46, -0.3]]) {
+            ctx.save();
+            ctx.translate(s * x, s * y);
+            ctx.rotate(angle);
+            ellipse(ctx, 0, 0, s * 0.09, s * 0.05, base);
+            ctx.fillStyle = '#7f7c34';
+            ctx.fillRect(-s * 0.09, -s * 0.01, s * 0.18, s * 0.02);
+            ctx.restore();
+        }
         return;
     }
     if (id === Item.Arrow) {

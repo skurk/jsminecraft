@@ -26,14 +26,14 @@ export class Particles {
     }
 
     /** Throws a puff of shards out from the centre of a block. */
-    burst(color, x, y, z, count = 16) {
+    burst(color, x, y, z, count = 16, speedScale = 1) {
         const geometry = this.geometryFor(color);
         for (let i = 0; i < count && this.live.length < MAX_PARTICLES; i++) {
             const mesh = new THREE.Mesh(geometry, this.material);
             mesh.position.set(x + (Math.random() - 0.5) * 0.7, y + (Math.random() - 0.5) * 0.7, z + (Math.random() - 0.5) * 0.7);
             mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
             const angle = Math.random() * Math.PI * 2;
-            const speed = 1.2 + Math.random() * 2.4;
+            const speed = (1.2 + Math.random() * 2.4) * speedScale;
             const velocity = new THREE.Vector3(Math.cos(angle) * speed * 0.6, speed * (0.4 + Math.random() * 0.8), Math.sin(angle) * speed * 0.6);
             const maxLife = 0.45 + Math.random() * 0.45;
             this.scene.add(mesh);

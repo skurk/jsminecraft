@@ -55,6 +55,15 @@ export const RECIPES = [
         ],
     },
     {
+        result: Item.WoodHoe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Planks, count: 2 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
         result: Item.StoneSword,
         count: 1,
         requiresTable: true,
@@ -87,6 +96,15 @@ export const RECIPES = [
         requiresTable: true,
         ingredients: [
             { id: Block.Cobblestone, count: 3 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
+        result: Item.StoneHoe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Cobblestone, count: 2 },
             { id: Item.Stick, count: 2 },
         ],
     },

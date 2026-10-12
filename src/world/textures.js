@@ -271,15 +271,18 @@ function paintFarmland(ctx, rand) {
     }
 }
 /** Thin stalks topped with grain, on a transparent background. */
-function paintWheat(ctx, rand) {
-    const [ox, oy] = tileOrigin(Tile.Wheat);
-    const grain = [222, 196, 86];
-    const husk = [176, 146, 52];
-    const stem = [150, 150, 70];
+function paintWheat(ctx, tile, stage, rand) {
+    const [ox, oy] = tileOrigin(tile);
+    const ripe = stage === 3;
+    const grain = ripe ? [222, 196, 86] : [138, 180, 78];
+    const husk = ripe ? [176, 146, 52] : [104, 156, 62];
+    const stem = ripe ? [150, 150, 70] : [86, 140, 58];
+    // Young crops are short, so the rows above the sprout stay transparent.
+    const base = [11, 7, 3, 1][stage];
     for (let i = 0; i < 4; i++) {
         const column = 1 + i * 4;
-        const top = 1 + (i % 2);
-        const earEnd = top + 8;
+        const top = base + (i % 2);
+        const earEnd = Math.min(TILE_PX - 1, top + 8);
         for (let y = top; y < TILE_PX; y++) {
             px(ctx, ox + column, oy + y, shade(y < earEnd ? husk : stem, (rand() * 2 - 1) * 10));
         }
@@ -287,6 +290,22 @@ function paintWheat(ctx, rand) {
         for (let y = top + 1; y < earEnd; y += 2) {
             px(ctx, ox + column - 1, oy + y, shade(grain, (rand() * 2 - 1) * 12));
             px(ctx, ox + column + 1, oy + y + 1, shade(grain, (rand() * 2 - 1) * 12));
+        }
+    }
+}
+/** Wild clumps of blades, shortest at the edges, on a transparent background. */
+function paintTallGrass(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.TallGrass);
+    const blade = [92, 158, 62];
+    for (let x = 1; x < TILE_PX - 1; x++) {
+        if (rand() < 0.3)
+            continue;
+        const edge = Math.abs(x - 7.5) / 7.5;
+        const top = 5 + Math.floor(edge * 5 + rand() * 3);
+        for (let y = top; y < TILE_PX; y++) {
+            // Tips catch the light, roots sit in shadow.
+            const fade = ((y - top) / (TILE_PX - top)) * 18 - 12;
+            px(ctx, ox + x, oy + y, shade(blade, fade + (rand() * 2 - 1) * 12));
         }
     }
 }
@@ -488,7 +507,11 @@ function buildAtlasCanvas() {
     paintCactusTop(ctx, rand);
     paintPath(ctx, rand);
     paintFarmland(ctx, rand);
-    paintWheat(ctx, rand);
+    paintWheat(ctx, Tile.WheatSprout, 0, rand);
+    paintWheat(ctx, Tile.WheatYoung, 1, rand);
+    paintWheat(ctx, Tile.WheatTall, 2, rand);
+    paintWheat(ctx, Tile.Wheat, 3, rand);
+    paintTallGrass(ctx, rand);
     paintHayTop(ctx, rand);
     paintHaySide(ctx, rand);
     paintBedTop(ctx, rand);

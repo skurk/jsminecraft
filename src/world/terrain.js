@@ -27,16 +27,16 @@ const APPLE_LEAF_CHANCE = 0.09;
 const MIN_LEAF_HEIGHT = 3;
 export const BIOMES = [
     { name: 'Plains', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.0075,
-        trees: [[TREES.oak, 5], [TREES.pine, 3], [TREES.fir, 2]] },
+        grassChance: 0.14, trees: [[TREES.oak, 5], [TREES.pine, 3], [TREES.fir, 2]] },
     { name: 'Forest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.045,
-        trees: [[TREES.pine, 4], [TREES.fir, 4], [TREES.oak, 3]] },
+        grassChance: 0.09, trees: [[TREES.pine, 4], [TREES.fir, 4], [TREES.oak, 3]] },
     { name: 'Desert', surface: Block.Sand, filler: Block.Sand, shore: Block.Sand, treeChance: 0.025,
-        trees: [[CACTUS, 1]] },
+        grassChance: 0, trees: [[CACTUS, 1]] },
     { name: 'Rainforest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.065,
-        trees: [[TREES.tropical, 1]] },
+        grassChance: 0.18, trees: [[TREES.tropical, 1]] },
     // Nordic: mostly birch, with firs filling in.
     { name: 'Tundra', surface: Block.Snow, filler: Block.Dirt, shore: Block.Ice, treeChance: 0.02,
-        trees: [[TREES.birch, 7], [TREES.fir, 3]] },
+        grassChance: 0, trees: [[TREES.birch, 7], [TREES.fir, 3]] },
 ];
 /** Climate changes slowly: the next zone over is typically a 2-4 minute walk. */
 const CLIMATE_SCALE = 0.0005;
@@ -154,6 +154,21 @@ function treeAt(x, z) {
         return null;
     return pickTree(biome.trees, randomAt(x, z, SEED + 29));
 }
+/** Wild grass grows in patches, so seeds are worth hunting for rather than everywhere. */
+const GRASS_PATCH_SCALE = 0.06;
+const GRASS_PATCH_FLOOR = 0.46;
+function grassAt(x, z, height, biome) {
+    if (!biome.grassChance || height <= SEA_LEVEL + 1)
+        return false;
+    if (insideVillage(x, z))
+        return false;
+    const patch = fbm2(x * GRASS_PATCH_SCALE, z * GRASS_PATCH_SCALE, 2, SEED + 51);
+    if (patch < GRASS_PATCH_FLOOR)
+        return false;
+    // Density ramps up towards the middle of a patch and fades at its edge.
+    const density = Math.min(1, (patch - GRASS_PATCH_FLOOR) * 8);
+    return randomAt(x, z, SEED + 53) < biome.grassChance * density * 3;
+}
 function hasLavaPool(x, z) {
     if (terrainHeight(x, z) <= SEA_LEVEL + 2)
         return false;
@@ -264,6 +279,8 @@ export function generateChunk(chunk) {
                 }
                 chunk.set(lx, y, lz, id);
             }
+            if (chunk.get(lx, height, lz) === Block.Grass && grassAt(wx, wz, height, biome))
+                chunk.set(lx, height + 1, lz, Block.TallGrass);
         }
     }
     // Trees may straddle chunk borders, so scan a margin and clip while stamping.
