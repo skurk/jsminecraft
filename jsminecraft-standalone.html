@@ -568,6 +568,30 @@ canvas {
   background: rgba(255, 215, 112, 0.16);
 }
 
+.difficulty-btn.controls-btn {
+  width: 200px;
+  border-style: dashed;
+}
+
+.controls-row {
+  display: flex;
+  justify-content: center;
+}
+
+.controls-overlay {
+  background: rgba(8, 14, 24, 0.75);
+  cursor: default;
+}
+
+.controls-overlay .panel {
+  width: min(880px, 94vw);
+}
+
+.controls-overlay h1 {
+  margin-bottom: 14px;
+  font-size: 24px;
+}
+
 .difficulty-btn b {
   font-size: 16px;
   letter-spacing: 0.5px;
@@ -684,7 +708,7 @@ const { Hand } = __require("src/player/hand.js");
 const { HOTBAR_SIZE, Hotbar } = __require("src/player/hotbar.js");
 const { Inventory } = __require("src/player/inventory.js");
 const { Player } = __require("src/player/player.js");
-const { BLOCKS, Block, blockSurface, isBreakable, isLava, isLog, isPlaceable, isWater } = __require("src/world/blocks.js");
+const { BLOCKS, Block, blockDrops, blockSurface, isBreakable, isCrop, isLava, isLog, isPlaceable, isSowable, isTillable, isWater } = __require("src/world/blocks.js");
 const { CHUNK_SIZE } = __require("src/world/chunk.js");
 const { SEA_LEVEL, biomeNameAt, terrainHeight } = __require("src/world/terrain.js");
 const { updateFluidAnimation } = __require("src/world/textures.js");
@@ -698,6 +722,14 @@ const PHYSICS_TICK = 0.08;
 const FIST_DAMAGE = 2;
 const ATTACK_COOLDOWN = 0.35;
 const GLASS_SHARD_COLOR = 0xcfe6f2;
+/** Debris colour for each plant, so a cut crop scatters its own blades or straw. */
+const PLANT_SHARD_COLORS = {
+    [Block.TallGrass]: 0x5c9e3e,
+    [Block.WheatSprout]: 0x6ea04a,
+    [Block.WheatYoung]: 0x6ea04a,
+    [Block.WheatTall]: 0x6ea04a,
+    [Block.Wheat]: 0xcea83c,
+};
 const MINE_SWING_INTERVAL = 0.3;
 const EAT_COOLDOWN = 0.8;
 /** Chance a thrown egg hatches where it lands. */
@@ -800,19 +832,21 @@ function refreshHotbar() {
     hud.setSelected(hotbar.selected);
 }
 function updateOverlay() {
-    hud.setOverlayVisible(!input.locked && !menu.open && !trade.open);
+    hud.setOverlayVisible(!input.locked && !input.resuming && !menu.open && !trade.open);
 }
 menu.onClose = () => {
-    updateOverlay();
     void input.requestLock();
+    updateOverlay();
 };
 menu.onChange = refreshHotbar;
 trade.onClose = () => {
-    updateOverlay();
     void input.requestLock();
+    updateOverlay();
 };
 trade.onChange = refreshHotbar;
 input.onLockChange = updateOverlay;
+// Escape grants no user activation, so the pointer only comes back on the next input.
+input.onLockBlocked = () => hud.showToast('Press any key to resume');
 let difficulty = DIFFICULTIES[DEFAULT_DIFFICULTY];
 mobs.setDifficulty(difficulty);
 hud.setDifficulty(difficulty.id);
@@ -824,12 +858,12 @@ hud.onSelectDifficulty = (id) => {
 };
 function openMenu(atTable) {
     menu.show(atTable);
-    document.exitPointerLock();
+    input.releaseLock();
     updateOverlay();
 }
 function openTrade(villager) {
     trade.show(villager);
-    document.exitPointerLock();
+    input.releaseLock();
     updateOverlay();
 }
 /** Bread feeds a villager, otherwise the use key opens their trades. */
@@ -850,14 +884,62 @@ function useOnVillager(villager) {
     }
     openTrade(villager);
 }
+/** A hoe turns the grass or dirt you are looking at into farmland. */
+function tillSoil(hit) {
+    const soil = world.getBlock(hit.block.x, hit.block.y, hit.block.z);
+    if (!isTillable(soil) || hit.normal.y !== 1)
+        return;
+    if (world.getBlock(hit.block.x, hit.block.y + 1, hit.block.z) !== Block.Air)
+        return;
+    world.setBlock(hit.block.x, hit.block.y, hit.block.z, Block.Farmland);
+    audio.playHit('dirt');
+}
+/** Seeds take in farmland or plain grass, and start at the first sprout stage. */
+function sowSeeds(hit) {
+    const soil = world.getBlock(hit.block.x, hit.block.y, hit.block.z);
+    const target = hit.block.clone().add(hit.normal);
+    if (!isSowable(soil) || hit.normal.y !== 1) {
+        hud.showToast('Seeds need grass or farmland');
+        return;
+    }
+    if (world.getBlock(target.x, target.y, target.z) !== Block.Air)
+        return;
+    if (!inventory.take(Item.Seeds))
+        return;
+    world.setBlock(target.x, target.y, target.z, Block.WheatSprout);
+    refreshHotbar();
+}
+/** Q throws one of the held stack on the ground, where it stays until picked up. */
+function dropHeldItem() {
+    if (!input.locked || menu.open || trade.open || player.health <= 0)
+        return;
+    const id = heldItem();
+    if (id === null || !inventory.take(id))
+        return;
+    const direction = forwardVector();
+    const origin = player.eyePosition.addScaledVector(direction, 0.4);
+    origin.y -= 0.25;
+    items.dropItem(id, origin, direction);
+    // The last one thrown away leaves the slot free rather than an empty icon.
+    if (inventory.count(id) === 0)
+        hotbar.assign(hotbar.selected, null);
+    hand.swing();
+    refreshHotbar();
+}
 input.onKeyPress = (code) => {
-    if (code === 'KeyE') {
-        if (trade.open)
+    if (code === 'KeyE' || code === 'Escape') {
+        if (hud.controlsOpen)
+            hud.hideControls();
+        else if (trade.open)
             trade.close();
         else if (menu.open)
             menu.close();
-        else
+        else if (code === 'KeyE')
             openMenu(false);
+        return;
+    }
+    if (code === 'KeyQ') {
+        dropHeldItem();
         return;
     }
     if (code === 'KeyF')
@@ -950,6 +1032,14 @@ input.onMouseDown = (button) => {
         }
         if (!hit)
             return;
+        if (toolOf(held)?.kind === 'hoe') {
+            tillSoil(hit);
+            return;
+        }
+        if (held === Item.Seeds) {
+            sowSeeds(hit);
+            return;
+        }
         const blockId = hotbar.item;
         if (blockId === null || !isBlockItem(blockId) || !isPlaceable(blockId))
             return;
@@ -960,8 +1050,7 @@ input.onMouseDown = (button) => {
         }
     }
 };
-const mining = { block: null, progress: 0, swingTimer: 0 };
-function updateMining(dt) {
+const mining = { block: null, progress: 0, swingTimer: 0 };function updateMining(dt) {
     const active = input.locked && !menu.open && !trade.open && input.isMouseDown(0) && player.health > 0;
     const hit = active ? raycast(world, player.eyePosition, forwardVector(), REACH) : null;
     const blockId = hit ? world.getBlock(hit.block.x, hit.block.y, hit.block.z) : Block.Air;
@@ -1000,11 +1089,13 @@ function updateMining(dt) {
         particles.burst(GLASS_SHARD_COLOR, hit.block.x + 0.5, hit.block.y + 0.5, hit.block.z + 0.5);
         audio.playGlassBreak();
     }
-    else if (blockId === Block.Wheat) {
+    else if (isCrop(blockId) || blockId === Block.TallGrass) {
         audio.playCropBreak();
+        particles.burst(PLANT_SHARD_COLORS[blockId], hit.block.x + 0.5, hit.block.y + 0.45, hit.block.z + 0.5, 12, 0.55);
     }
     if (!def.requiresTool || toolMatches) {
-        items.spawn(def.drop, hit.block.x + 0.5, hit.block.y + 0.2, hit.block.z + 0.5);
+        for (const drop of blockDrops(blockId))
+            items.spawn(drop, hit.block.x + 0.5, hit.block.y + 0.2, hit.block.z + 0.5);
     }
     mining.block = null;
     mining.progress = 0;
@@ -1284,6 +1375,11 @@ const DOUBLE_TAP_MS = 280;
 const ATTACK_KEYS = ['ControlLeft', 'ControlRight'];
 /** Browsers can report a huge bogus delta right after locking; anything past this is noise. */
 const MAX_MOVE_PER_EVENT = 300;
+// Chrome bars pointer lock for 1.25s after Escape, so the retry waits that out.
+const RELOCK_DELAY = 1350;
+/** A lock lost this soon after being asked for was taken back, not given up. */
+const REVOKE_WINDOW = 1500;
+const MAX_RELOCKS = 2;
 function clampMove(amount) {
     return Math.max(-MAX_MOVE_PER_EVENT, Math.min(MAX_MOVE_PER_EVENT, amount));
 }
@@ -1300,8 +1396,16 @@ class Input {
     onKeyPress = null;
     onScroll = null;
     onLockChange = null;
+    onLockBlocked = null;
     element;
     skipNextMove = false;
+    /** True while a lock has been asked for but not granted yet. */
+    lockPending = false;
+    /** Escape bars the pointer lock until the next gesture, so the request waits for one. */
+    relockOnGesture = false;
+    lockTimer = 0;
+    lockRequestedAt = 0;
+    relockAttempts = 0;
     constructor(element) {
         this.element = element;
         window.addEventListener('keydown', (event) => {
@@ -1318,6 +1422,9 @@ class Input {
                 this.lastForwardTap = now;
             }
             this.onKeyPress?.(event.code);
+            // Escape itself grants no user activation, so any later key does the re-locking.
+            if (this.relockOnGesture && event.code !== 'Escape')
+                void this.requestLock();
             // Ctrl stands in for the left mouse button, so it swings on press
             // and keeps mining while held.
             if (this.locked && ATTACK_KEYS.includes(event.code))
@@ -1332,6 +1439,7 @@ class Input {
         document.addEventListener('pointerlockchange', () => {
             this.locked = document.pointerLockElement === this.element;
             if (this.locked) {
+                this.cancelRelock();
                 // The first move after locking carries the jump from the cursor's old position.
                 this.skipNextMove = true;
                 this.mouseDeltaX = 0;
@@ -1340,6 +1448,9 @@ class Input {
             else {
                 this.releaseAll();
                 this.buttons.clear();
+                // Chrome grants the lock after Escape and then takes it straight back.
+                if (performance.now() - this.lockRequestedAt < REVOKE_WINDOW)
+                    this.scheduleRelock();
             }
             this.onLockChange?.(this.locked);
         });
@@ -1399,13 +1510,61 @@ class Input {
     get attackKeyDown() {
         return ATTACK_KEYS.some((code) => this.keys.has(code));
     }
+    /** True while the game is waiting to get the pointer back, so no menu should show. */
+    get resuming() {
+        return this.lockPending || this.relockOnGesture;
+    }
     async requestLock() {
+        this.cancelRelock();
+        this.relockAttempts = 0;
+        this.lockPending = true;
+        this.lockRequestedAt = performance.now();
         try {
             await this.element.requestPointerLock();
+            this.lockPending = false;
         }
         catch {
-            // Browsers reject rapid re-locks; the user can simply click again.
+            this.scheduleRelock();
         }
+    }
+    /** Queues another attempt; Escape bars the lock for about a second either way. */
+    scheduleRelock() {
+        clearTimeout(this.lockTimer);
+        if (this.relockAttempts >= MAX_RELOCKS) {
+            this.lockTimer = 0;
+            this.lockPending = false;
+            this.onLockBlocked?.();
+            return;
+        }
+        this.relockAttempts++;
+        this.lockPending = true;
+        // Also re-lock on the next gesture, for browsers that insist on one.
+        this.relockOnGesture = true;
+        this.lockTimer = setTimeout(() => this.retryLock(), RELOCK_DELAY);
+    }
+    async retryLock() {
+        this.lockTimer = 0;
+        this.lockRequestedAt = performance.now();
+        try {
+            await this.element.requestPointerLock();
+            this.relockOnGesture = false;
+            this.lockPending = false;
+        }
+        catch {
+            this.scheduleRelock();
+        }
+    }
+    cancelRelock() {
+        clearTimeout(this.lockTimer);
+        this.lockTimer = 0;
+        this.relockOnGesture = false;
+        this.lockPending = false;
+    }
+    /** Deliberate release, as when a screen opens; nothing should grab the pointer back. */
+    releaseLock() {
+        this.cancelRelock();
+        this.lockRequestedAt = 0;
+        document.exitPointerLock();
     }
     consumeMouseDelta() {
         const delta = [this.mouseDeltaX, this.mouseDeltaY];
@@ -2537,14 +2696,14 @@ class Particles {
     }
 
     /** Throws a puff of shards out from the centre of a block. */
-    burst(color, x, y, z, count = 16) {
+    burst(color, x, y, z, count = 16, speedScale = 1) {
         const geometry = this.geometryFor(color);
         for (let i = 0; i < count && this.live.length < MAX_PARTICLES; i++) {
             const mesh = new THREE.Mesh(geometry, this.material);
             mesh.position.set(x + (Math.random() - 0.5) * 0.7, y + (Math.random() - 0.5) * 0.7, z + (Math.random() - 0.5) * 0.7);
             mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
             const angle = Math.random() * Math.PI * 2;
-            const speed = 1.2 + Math.random() * 2.4;
+            const speed = (1.2 + Math.random() * 2.4) * speedScale;
             const velocity = new THREE.Vector3(Math.cos(angle) * speed * 0.6, speed * (0.4 + Math.random() * 0.8), Math.sin(angle) * speed * 0.6);
             const maxLife = 0.45 + Math.random() * 0.45;
             this.scene.add(mesh);
@@ -2600,6 +2759,10 @@ const ITEM_SIZE = 0.3;
 const GRAVITY = -24;
 const GROUND_DRAG = 3.5;
 const PICKUP_DELAY = 0.4;
+// Longer for a deliberate toss, so it does not fly straight back into the pack.
+const DROP_PICKUP_DELAY = 1.2;
+const DROP_SPEED = 5;
+const DROP_LIFT = 2.4;
 const MAGNET_RANGE = 2;
 const PICKUP_RANGE = 0.75;
 const MAGNET_SPEED = 9;
@@ -2639,6 +2802,7 @@ class ItemDrop {
     mesh;
     onGround = false;
     age = 0;
+    pickupDelay = PICKUP_DELAY;
     thrown = false;
     broke = false;
     hurts = 0;
@@ -2658,7 +2822,7 @@ class ItemDrop {
         target.y += 0.9;
         const toPlayer = target.sub(this.position);
         const distance = toPlayer.length();
-        if (this.age > PICKUP_DELAY && distance < MAGNET_RANGE && player.health > 0) {
+        if (this.age > this.pickupDelay && distance < MAGNET_RANGE && player.health > 0) {
             if (distance < PICKUP_RANGE)
                 return true;
             this.position.addScaledVector(toPlayer.normalize(), MAGNET_SPEED * dt);
@@ -2755,6 +2919,15 @@ class ItemManager {
         if (this.drops.length >= MAX_DROPS)
             return;
         this.create(itemId, x, y, z);
+    }
+    /** Tosses an item out in front of the player, still free to be picked back up. */
+    dropItem(itemId, origin, direction) {
+        if (this.drops.length >= MAX_DROPS)
+            return;
+        const drop = this.create(itemId, origin.x, origin.y, origin.z);
+        drop.pickupDelay = DROP_PICKUP_DELAY;
+        drop.velocity.copy(direction).normalize().multiplyScalar(DROP_SPEED);
+        drop.velocity.y = DROP_LIFT;
     }
     /** Hurls an item forward; it shatters on the first thing it touches. */
     throwItem(itemId, origin, direction, { speed = THROW_SPEED, hurts = 0, lift = 2 } = {}) {
@@ -3907,10 +4080,12 @@ const ITEMS = {
     [Item.WoodShovel]: { name: 'Wooden Shovel', color: WOOD_HEAD, tool: { kind: 'shovel', speed: 3, damage: 2 } },
     [Item.WoodPickaxe]: { name: 'Wooden Pickaxe', color: WOOD_HEAD, tool: { kind: 'pickaxe', speed: 3, damage: 2 } },
     [Item.WoodAxe]: { name: 'Wooden Axe', color: WOOD_HEAD, tool: { kind: 'axe', speed: 3, damage: 3 } },
+    [Item.WoodHoe]: { name: 'Wooden Hoe', color: WOOD_HEAD, tool: { kind: 'hoe', speed: 1, damage: 2 } },
     [Item.StoneSword]: { name: 'Stone Sword', color: STONE_HEAD, tool: { kind: 'sword', speed: 1, damage: 7 } },
     [Item.StoneShovel]: { name: 'Stone Shovel', color: STONE_HEAD, tool: { kind: 'shovel', speed: 6, damage: 3 } },
     [Item.StonePickaxe]: { name: 'Stone Pickaxe', color: STONE_HEAD, tool: { kind: 'pickaxe', speed: 6, damage: 3 } },
     [Item.StoneAxe]: { name: 'Stone Axe', color: STONE_HEAD, tool: { kind: 'axe', speed: 6, damage: 4 } },
+    [Item.StoneHoe]: { name: 'Stone Hoe', color: STONE_HEAD, tool: { kind: 'hoe', speed: 1, damage: 2 } },
     [Item.Apple]: { name: 'Apple', color: 0xd4312a, tool: null, food: { heal: 4, sickness: 0 } },
     [Item.RawChicken]: { name: 'Raw Chicken', color: 0xf0bfae, tool: null, food: { heal: 3, sickness: 0 } },
     [Item.RawPork]: { name: 'Raw Porkchop', color: 0xf09a9a, tool: null, food: { heal: 5, sickness: 0 } },
@@ -3924,6 +4099,7 @@ const ITEMS = {
     [Item.Arrow]: { name: 'Arrow', color: 0xb8b8b8, tool: null, sprite: true },
     [Item.Emerald]: { name: 'Emerald', color: 0x2ecc71, tool: null, sprite: true },
     [Item.Bread]: { name: 'Bread', color: 0xc08a4a, tool: null, food: { heal: 4, sickness: 0 } },
+    [Item.Seeds]: { name: 'Wheat Seeds', color: 0xb6b45c, tool: null, sprite: true },
 };
 function isBlockItem(id) {
     return id < 100;
@@ -3998,6 +4174,10 @@ function drawToolIcon(ctx, size, id) {
         ctx.closePath();
         ctx.fill();
     }
+    else if (kind === 'hoe') {
+        ctx.fillRect(-0.3 * s, -0.42 * s, 0.34 * s, 0.1 * s);
+        ctx.fillRect(-0.3 * s, -0.42 * s, 0.1 * s, 0.2 * s);
+    }
     ctx.restore();
 }
 function hex(color) {
@@ -4059,6 +4239,20 @@ function drawFoodIcon(ctx, size, id) {
             for (const x of [-0.08, 0.08])
                 ellipse(ctx, x * s, y * s, s * 0.075, s * 0.075, base);
         ctx.restore();
+        return;
+    }
+    if (id === Item.Seeds) {
+        const base = hex(ITEMS[id].color);
+        // A scatter of husked grains.
+        for (const [x, y, angle] of [[0.38, 0.6, -0.5], [0.58, 0.66, 0.4], [0.5, 0.42, 0.2], [0.66, 0.46, -0.3]]) {
+            ctx.save();
+            ctx.translate(s * x, s * y);
+            ctx.rotate(angle);
+            ellipse(ctx, 0, 0, s * 0.09, s * 0.05, base);
+            ctx.fillStyle = '#7f7c34';
+            ctx.fillRect(-s * 0.09, -s * 0.01, s * 0.18, s * 0.02);
+            ctx.restore();
+        }
         return;
     }
     if (id === Item.Arrow) {
@@ -4312,7 +4506,11 @@ class Inventory {
         const held = this.count(blockId);
         if (held < amount)
             return false;
-        this.counts.set(blockId, held - amount);
+        // Emptied stacks are forgotten rather than kept at zero.
+        if (held === amount)
+            this.counts.delete(blockId);
+        else
+            this.counts.set(blockId, held - amount);
         return true;
     }
     /** Owned items as [id, count] pairs, ordered by id. */
@@ -4732,6 +4930,11 @@ const Block = {
     SmithingTable: 47,
     FletchingTable: 48,
     Bell: 49,
+    // Plants. Wheat above is the ripe stage, which doubles as the harvested item.
+    TallGrass: 50,
+    WheatSprout: 51,
+    WheatYoung: 52,
+    WheatTall: 53,
 };
 /** Index into the procedurally generated texture atlas. */
 const Tile = {
@@ -4784,6 +4987,10 @@ const Tile = {
     FletchingSide: 46,
     BellTop: 47,
     BellSide: 48,
+    TallGrass: 49,
+    WheatSprout: 50,
+    WheatYoung: 51,
+    WheatTall: 52,
 };
 const BLOCKS = [
     {
@@ -5135,6 +5342,7 @@ BLOCKS.push({
     tool: null,
     requiresTool: false,
     drop: Block.Wheat,
+    drops: [{ id: Block.Wheat }, { id: Item.Seeds, min: 0, max: 3 }],
     full: false,
     cutout: true,
     cross: true,
@@ -5229,6 +5437,68 @@ BLOCKS.push({
     tool: 'pickaxe',
     requiresTool: true,
     drop: Block.Bell,
+}, {
+    name: 'Grass',
+    solid: false,
+    liquid: false,
+    top: Tile.TallGrass,
+    side: Tile.TallGrass,
+    bottom: Tile.TallGrass,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Block.Air,
+    // One clump in eight gives up a seed, as in the Overworld.
+    drops: [{ id: Item.Seeds, chance: 0.125 }],
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
+}, {
+    name: 'Wheat Crop',
+    solid: false,
+    liquid: false,
+    top: Tile.WheatSprout,
+    side: Tile.WheatSprout,
+    bottom: Tile.WheatSprout,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Item.Seeds,
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
+}, {
+    name: 'Wheat Crop',
+    solid: false,
+    liquid: false,
+    top: Tile.WheatYoung,
+    side: Tile.WheatYoung,
+    bottom: Tile.WheatYoung,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Item.Seeds,
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
+}, {
+    name: 'Wheat Crop',
+    solid: false,
+    liquid: false,
+    top: Tile.WheatTall,
+    side: Tile.WheatTall,
+    bottom: Tile.WheatTall,
+    hardness: 0.05,
+    tool: null,
+    requiresTool: false,
+    drop: Item.Seeds,
+    full: false,
+    cutout: true,
+    cross: true,
+    placeable: false,
 });
 const UNIT_BOX = [0, 0, 0, 1, 1, 1];
 /** False for blocks that do not fill their voxel, so neighbours keep their faces. */
@@ -5249,6 +5519,50 @@ function isCross(id) {
 /** False for harvested goods that are carried but never put back in the world. */
 function isPlaceable(id) {
     return BLOCKS[id].placeable !== false;
+}
+/** Wheat from sprout to ripe; only the last stage yields grain. */
+const WHEAT_STAGES = [Block.WheatSprout, Block.WheatYoung, Block.WheatTall, Block.Wheat];
+function isCrop(id) {
+    return WHEAT_STAGES.includes(id);
+}
+/** The stage a crop grows into, or null once it is ripe. */
+function nextCropStage(id) {
+    const stage = WHEAT_STAGES.indexOf(id);
+    return stage >= 0 && stage < WHEAT_STAGES.length - 1 ? WHEAT_STAGES[stage + 1] : null;
+}
+function isPlant(id) {
+    return id === Block.TallGrass || isCrop(id);
+}
+/** Plants pop off when the ground they need is taken away. */
+function canPlantStay(id, soil) {
+    if (isCrop(id))
+        return soil === Block.Farmland || soil === Block.Grass;
+    if (id === Block.TallGrass)
+        return soil === Block.Grass || soil === Block.Dirt || soil === Block.Farmland;
+    return true;
+}
+/** Ground wheat seeds take root in; farmland is just the tended version. */
+function isSowable(id) {
+    return id === Block.Farmland || id === Block.Grass;
+}
+/** Blocks a hoe turns into farmland. */
+function isTillable(id) {
+    return id === Block.Grass || id === Block.Dirt;
+}
+/** Rolls what a broken block leaves behind; chance and count cover crops and grass. */
+function blockDrops(id) {
+    const def = BLOCKS[id];
+    const spawned = [];
+    for (const entry of def.drops ?? [{ id: def.drop }]) {
+        if (entry.chance !== undefined && Math.random() >= entry.chance)
+            continue;
+        const count = entry.max === undefined
+            ? entry.count ?? 1
+            : entry.min + Math.floor(Math.random() * (entry.max - entry.min + 1));
+        for (let i = 0; i < count; i++)
+            spawned.push(entry.id);
+    }
+    return spawned;
 }
 function blockLight(id) {
     return BLOCKS[id].light ?? 0;
@@ -5303,6 +5617,11 @@ function isAir(id) {
 function blockSurface(id) {
     switch (id) {
         case Block.Grass:
+        case Block.TallGrass:
+        case Block.Wheat:
+        case Block.WheatSprout:
+        case Block.WheatYoung:
+        case Block.WheatTall:
             return 'grass';
         case Block.Sand:
             return 'sand';
@@ -5358,6 +5677,14 @@ __exports["blockBox"] = blockBox;
 __exports["isCutout"] = isCutout;
 __exports["isCross"] = isCross;
 __exports["isPlaceable"] = isPlaceable;
+__exports["WHEAT_STAGES"] = WHEAT_STAGES;
+__exports["isCrop"] = isCrop;
+__exports["nextCropStage"] = nextCropStage;
+__exports["isPlant"] = isPlant;
+__exports["canPlantStay"] = canPlantStay;
+__exports["isSowable"] = isSowable;
+__exports["isTillable"] = isTillable;
+__exports["blockDrops"] = blockDrops;
 __exports["blockLight"] = blockLight;
 __exports["isSolid"] = isSolid;
 __exports["isWater"] = isWater;
@@ -5455,16 +5782,16 @@ const APPLE_LEAF_CHANCE = 0.09;
 const MIN_LEAF_HEIGHT = 3;
 const BIOMES = [
     { name: 'Plains', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.0075,
-        trees: [[TREES.oak, 5], [TREES.pine, 3], [TREES.fir, 2]] },
+        grassChance: 0.14, trees: [[TREES.oak, 5], [TREES.pine, 3], [TREES.fir, 2]] },
     { name: 'Forest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.045,
-        trees: [[TREES.pine, 4], [TREES.fir, 4], [TREES.oak, 3]] },
+        grassChance: 0.09, trees: [[TREES.pine, 4], [TREES.fir, 4], [TREES.oak, 3]] },
     { name: 'Desert', surface: Block.Sand, filler: Block.Sand, shore: Block.Sand, treeChance: 0.025,
-        trees: [[CACTUS, 1]] },
+        grassChance: 0, trees: [[CACTUS, 1]] },
     { name: 'Rainforest', surface: Block.Grass, filler: Block.Dirt, shore: Block.Sand, treeChance: 0.065,
-        trees: [[TREES.tropical, 1]] },
+        grassChance: 0.18, trees: [[TREES.tropical, 1]] },
     // Nordic: mostly birch, with firs filling in.
     { name: 'Tundra', surface: Block.Snow, filler: Block.Dirt, shore: Block.Ice, treeChance: 0.02,
-        trees: [[TREES.birch, 7], [TREES.fir, 3]] },
+        grassChance: 0, trees: [[TREES.birch, 7], [TREES.fir, 3]] },
 ];
 /** Climate changes slowly: the next zone over is typically a 2-4 minute walk. */
 const CLIMATE_SCALE = 0.0005;
@@ -5582,6 +5909,21 @@ function treeAt(x, z) {
         return null;
     return pickTree(biome.trees, randomAt(x, z, SEED + 29));
 }
+/** Wild grass grows in patches, so seeds are worth hunting for rather than everywhere. */
+const GRASS_PATCH_SCALE = 0.06;
+const GRASS_PATCH_FLOOR = 0.46;
+function grassAt(x, z, height, biome) {
+    if (!biome.grassChance || height <= SEA_LEVEL + 1)
+        return false;
+    if (insideVillage(x, z))
+        return false;
+    const patch = fbm2(x * GRASS_PATCH_SCALE, z * GRASS_PATCH_SCALE, 2, SEED + 51);
+    if (patch < GRASS_PATCH_FLOOR)
+        return false;
+    // Density ramps up towards the middle of a patch and fades at its edge.
+    const density = Math.min(1, (patch - GRASS_PATCH_FLOOR) * 8);
+    return randomAt(x, z, SEED + 53) < biome.grassChance * density * 3;
+}
 function hasLavaPool(x, z) {
     if (terrainHeight(x, z) <= SEA_LEVEL + 2)
         return false;
@@ -5692,6 +6034,8 @@ function generateChunk(chunk) {
                 }
                 chunk.set(lx, y, lz, id);
             }
+            if (chunk.get(lx, height, lz) === Block.Grass && grassAt(wx, wz, height, biome))
+                chunk.set(lx, height + 1, lz, Block.TallGrass);
         }
     }
     // Trees may straddle chunk borders, so scan a margin and clip while stamping.
@@ -5992,15 +6336,18 @@ function paintFarmland(ctx, rand) {
     }
 }
 /** Thin stalks topped with grain, on a transparent background. */
-function paintWheat(ctx, rand) {
-    const [ox, oy] = tileOrigin(Tile.Wheat);
-    const grain = [222, 196, 86];
-    const husk = [176, 146, 52];
-    const stem = [150, 150, 70];
+function paintWheat(ctx, tile, stage, rand) {
+    const [ox, oy] = tileOrigin(tile);
+    const ripe = stage === 3;
+    const grain = ripe ? [222, 196, 86] : [138, 180, 78];
+    const husk = ripe ? [176, 146, 52] : [104, 156, 62];
+    const stem = ripe ? [150, 150, 70] : [86, 140, 58];
+    // Young crops are short, so the rows above the sprout stay transparent.
+    const base = [11, 7, 3, 1][stage];
     for (let i = 0; i < 4; i++) {
         const column = 1 + i * 4;
-        const top = 1 + (i % 2);
-        const earEnd = top + 8;
+        const top = base + (i % 2);
+        const earEnd = Math.min(TILE_PX - 1, top + 8);
         for (let y = top; y < TILE_PX; y++) {
             px(ctx, ox + column, oy + y, shade(y < earEnd ? husk : stem, (rand() * 2 - 1) * 10));
         }
@@ -6008,6 +6355,22 @@ function paintWheat(ctx, rand) {
         for (let y = top + 1; y < earEnd; y += 2) {
             px(ctx, ox + column - 1, oy + y, shade(grain, (rand() * 2 - 1) * 12));
             px(ctx, ox + column + 1, oy + y + 1, shade(grain, (rand() * 2 - 1) * 12));
+        }
+    }
+}
+/** Wild clumps of blades, shortest at the edges, on a transparent background. */
+function paintTallGrass(ctx, rand) {
+    const [ox, oy] = tileOrigin(Tile.TallGrass);
+    const blade = [92, 158, 62];
+    for (let x = 1; x < TILE_PX - 1; x++) {
+        if (rand() < 0.3)
+            continue;
+        const edge = Math.abs(x - 7.5) / 7.5;
+        const top = 5 + Math.floor(edge * 5 + rand() * 3);
+        for (let y = top; y < TILE_PX; y++) {
+            // Tips catch the light, roots sit in shadow.
+            const fade = ((y - top) / (TILE_PX - top)) * 18 - 12;
+            px(ctx, ox + x, oy + y, shade(blade, fade + (rand() * 2 - 1) * 12));
         }
     }
 }
@@ -6209,7 +6572,11 @@ function buildAtlasCanvas() {
     paintCactusTop(ctx, rand);
     paintPath(ctx, rand);
     paintFarmland(ctx, rand);
-    paintWheat(ctx, rand);
+    paintWheat(ctx, Tile.WheatSprout, 0, rand);
+    paintWheat(ctx, Tile.WheatYoung, 1, rand);
+    paintWheat(ctx, Tile.WheatTall, 2, rand);
+    paintWheat(ctx, Tile.Wheat, 3, rand);
+    paintTallGrass(ctx, rand);
     paintHayTop(ctx, rand);
     paintHaySide(ctx, rand);
     paintBedTop(ctx, rand);
@@ -6323,7 +6690,7 @@ __exports["drawTileTo"] = drawTileTo;
 "src/world/world.js": function (__exports, __require) {
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
-const { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, hasGravity, isLava, isLiquid, isSolid, isWater, lavaFlowId, lavaLevel, waterFlowId, waterLevel } = __require("src/world/blocks.js");
+const { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, canPlantStay, hasGravity, isLava, isLiquid, isPlant, isSolid, isWater, lavaFlowId, lavaLevel, nextCropStage, waterFlowId, waterLevel } = __require("src/world/blocks.js");
 const { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey } = __require("src/world/chunk.js");
 const { buildChunkGeometry, TORCH_RANGE } = __require("src/world/mesher.js");
 const { generateChunk } = __require("src/world/terrain.js");
@@ -6333,6 +6700,12 @@ const MAX_BUILDS_PER_FRAME = 3;
 // block for water and 30 for lava, against this game's 0.08s physics tick.
 const WATER_TICKS = 3;
 const LAVA_TICKS = 19;
+// Ticks a crop spends in each stage, so a field ripens in roughly one to two minutes.
+const CROP_MIN_TICKS = 220;
+const CROP_MAX_TICKS = 460;
+function cropTicks() {
+    return CROP_MIN_TICKS + Math.floor(Math.random() * (CROP_MAX_TICKS - CROP_MIN_TICKS));
+}
 const HORIZONTAL = [
     [1, 0],
     [-1, 0],
@@ -6358,6 +6731,8 @@ class World {
     pendingUpdates = new Set();
     tickCount = 0;
     torches = new Map();
+    /** Position key to ticks left before the crop there moves to its next stage. */
+    growing = new Map();
     daylightUniform = { value: 1 };
     constructor(scene, renderDistance = 6) {
         this.scene = scene;
@@ -6427,8 +6802,12 @@ class World {
             return;
         chunk.set(lx, y, lz, id);
         chunk.dirty = true;
+        const key = `${x},${y},${z}`;
+        if (nextCropStage(id) !== null)
+            this.growing.set(key, cropTicks());
+        else
+            this.growing.delete(key);
         if (previous === Block.Torch || id === Block.Torch) {
-            const key = `${x},${y},${z}`;
             if (id === Block.Torch)
                 this.torches.set(key, { x: x + 0.5, y: y + 0.35, z: z + 0.5 });
             else
@@ -6455,6 +6834,7 @@ class World {
     /** Steps queued block updates by one voxel; call at a fixed rate. */
     tickPhysics() {
         this.tickCount++;
+        this.growCrops();
         if (this.pendingUpdates.size === 0)
             return;
         const waterDue = this.tickCount % WATER_TICKS === 0;
@@ -6470,6 +6850,10 @@ class World {
         positions.sort((a, b) => a[1] - b[1]);
         for (const [x, y, z] of positions) {
             const id = this.getBlock(x, y, z);
+            if (isPlant(id) && !canPlantStay(id, this.getBlock(x, y - 1, z))) {
+                this.setBlock(x, y, z, Block.Air);
+                continue;
+            }
             if (hasGravity(id)) {
                 const below = this.getBlock(x, y - 1, z);
                 if (below !== Block.Air && !isLiquid(below))
@@ -6491,6 +6875,23 @@ class World {
                 else
                     this.pendingUpdates.add(`${x},${y},${z}`);
             }
+        }
+    }
+    /** Counts planted crops down to their next stage. */
+    growCrops() {
+        for (const [key, remaining] of this.growing) {
+            if (remaining > 1) {
+                this.growing.set(key, remaining - 1);
+                continue;
+            }
+            const [x, y, z] = key.split(',').map(Number);
+            const next = nextCropStage(this.getBlock(x, y, z));
+            if (next === null) {
+                this.growing.delete(key);
+                continue;
+            }
+            // setBlock re-registers the new stage, or drops it once ripe.
+            this.setBlock(x, y, z, next);
         }
     }
     flowWater(x, y, z, id) {
@@ -6651,6 +7052,7 @@ class World {
                 chunk.dispose(this.scene);
                 this.chunks.delete(chunkKey(chunk.cx, chunk.cz));
                 this.forgetTorches(chunk.cx, chunk.cz);
+                this.forgetCrops(chunk.cx, chunk.cz);
                 continue;
             }
             if (chunk.dirty && distSq <= r * r)
@@ -6682,6 +7084,14 @@ class World {
         for (const [key, torch] of this.torches) {
             if (Math.floor(torch.x / CHUNK_SIZE) === cx && Math.floor(torch.z / CHUNK_SIZE) === cz)
                 this.torches.delete(key);
+        }
+    }
+    /** Crops in an unloaded chunk go with it, so they stop being ticked. */
+    forgetCrops(cx, cz) {
+        for (const key of this.growing.keys()) {
+            const [x, , z] = key.split(',').map(Number);
+            if (Math.floor(x / CHUNK_SIZE) === cx && Math.floor(z / CHUNK_SIZE) === cz)
+                this.growing.delete(key);
         }
     }
     scheduleUpdate(x, y, z) {
@@ -6772,6 +7182,7 @@ class Hud {
     bubbles = [];
     airRow;
     overlay;
+    controls;
     debug;
     flash;
     banner;
@@ -6875,19 +7286,57 @@ class Hud {
             this.difficultyButtons.push(button);
         }
         panel.appendChild(choices);
-        const controls = document.createElement('ul');
-        controls.innerHTML = `
-      <li><b>WASD</b> move &middot; <b>Shift</b> or <b>double-tap W</b> sprint &middot; <b>Space</b> jump</li>
-      <li><b>Mouse</b> or <b>arrow keys</b> look around</li>
-      <li><b>Hold left click</b> or <b>Ctrl</b> mine &middot; <b>Left click</b> attack &middot; <b>Right click</b> place / use</li>
-      <li><b>1-9</b> or <b>scroll</b> select slot &middot; <b>E</b> inventory &amp; crafting &middot; <b>F</b> flight &middot; <b>Esc</b> release cursor</li>
-      <li>Mine logs, craft planks and sticks, then place a crafting table for tools.</li>
-      <li>Find a village: <b>right click</b> a villager to trade, and feed them bread to grow the village.</li>
-      <li class="warn">Zombies and spiders spawn in the dark &mdash; stay in the light.</li>`;
-        panel.appendChild(controls);
+        const helpRow = document.createElement('div');
+        helpRow.className = 'controls-row';
+        const help = document.createElement('button');
+        help.className = 'difficulty-btn controls-btn';
+        help.innerHTML = `<b>Controls</b><small>How to play</small>`;
+        // Stops the overlay beneath from grabbing the pointer and starting the game.
+        help.addEventListener('mousedown', (event) => {
+            event.stopPropagation();
+            this.showControls();
+        });
+        helpRow.appendChild(help);
+        panel.appendChild(helpRow);
         this.overlay.appendChild(panel);
         root.appendChild(this.overlay);
+        this.controls = document.createElement('div');
+        this.controls.className = 'overlay controls-overlay hidden';
+        const controlsPanel = document.createElement('div');
+        controlsPanel.className = 'panel';
+        controlsPanel.innerHTML = `
+      <h1>Controls</h1>
+      <ul>
+        <li><b>WASD</b> move &middot; <b>Shift</b> or <b>double-tap W</b> sprint &middot; <b>Space</b> jump</li>
+        <li><b>Mouse</b> or <b>arrow keys</b> look around</li>
+        <li><b>Hold left click</b> or <b>Ctrl</b> mine &middot; <b>Left click</b> attack &middot; <b>Right click</b> place / use</li>
+        <li><b>1-9</b> or <b>scroll</b> select slot &middot; <b>Q</b> drop held item &middot; <b>E</b> inventory &amp; crafting &middot; <b>F</b> flight &middot; <b>Esc</b> release cursor</li>
+        <li>Mine logs, craft planks and sticks, then place a crafting table for tools.</li>
+        <li>Break wild <b>grass</b> for seeds, sow them on grass or hoed farmland, then wait for the gold ears.</li>
+        <li>Find a village: <b>right click</b> a villager to trade, and feed them bread to grow the village.</li>
+        <li class="warn">Zombies and spiders spawn in the dark &mdash; stay in the light.</li>
+      </ul>`;
+        const closeControls = document.createElement('button');
+        closeControls.className = 'inv-close';
+        closeControls.textContent = 'Close';
+        controlsPanel.appendChild(closeControls);
+        this.controls.appendChild(controlsPanel);
+        this.controls.addEventListener('mousedown', (event) => {
+            event.stopPropagation();
+            if (event.target === this.controls || event.target === closeControls)
+                this.hideControls();
+        });
+        root.appendChild(this.controls);
         this.setSelected(0);
+    }
+    get controlsOpen() {
+        return !this.controls.classList.contains('hidden');
+    }
+    showControls() {
+        this.controls.classList.remove('hidden');
+    }
+    hideControls() {
+        this.controls.classList.add('hidden');
     }
     setSelected(index) {
         this.slots.forEach((slot, i) => slot.classList.toggle('selected', i === index));
@@ -6953,6 +7402,8 @@ class Hud {
     }
     setOverlayVisible(visible) {
         this.overlay.classList.toggle('hidden', !visible);
+        if (!visible)
+            this.hideControls();
     }
     setDifficulty(id) {
         const order = Object.keys(DIFFICULTIES);
@@ -7419,10 +7870,12 @@ const Item = {
     WoodShovel: 111,
     WoodPickaxe: 112,
     WoodAxe: 113,
+    WoodHoe: 114,
     StoneSword: 120,
     StoneShovel: 121,
     StonePickaxe: 122,
     StoneAxe: 123,
+    StoneHoe: 124,
     Apple: 200,
     RawChicken: 201,
     RawPork: 202,
@@ -7435,6 +7888,7 @@ const Item = {
     Arrow: 209,
     Emerald: 210,
     Bread: 211,
+    Seeds: 212,
 };
 
 __exports["Item"] = Item;
@@ -8706,6 +9160,15 @@ const RECIPES = [
         ],
     },
     {
+        result: Item.WoodHoe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Planks, count: 2 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
         result: Item.StoneSword,
         count: 1,
         requiresTable: true,
@@ -8738,6 +9201,15 @@ const RECIPES = [
         requiresTable: true,
         ingredients: [
             { id: Block.Cobblestone, count: 3 },
+            { id: Item.Stick, count: 2 },
+        ],
+    },
+    {
+        result: Item.StoneHoe,
+        count: 1,
+        requiresTable: true,
+        ingredients: [
+            { id: Block.Cobblestone, count: 2 },
             { id: Item.Stick, count: 2 },
         ],
     },

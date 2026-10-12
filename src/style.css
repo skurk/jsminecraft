@@ -560,6 +560,30 @@ canvas {
   background: rgba(255, 215, 112, 0.16);
 }
 
+.difficulty-btn.controls-btn {
+  width: 200px;
+  border-style: dashed;
+}
+
+.controls-row {
+  display: flex;
+  justify-content: center;
+}
+
+.controls-overlay {
+  background: rgba(8, 14, 24, 0.75);
+  cursor: default;
+}
+
+.controls-overlay .panel {
+  width: min(880px, 94vw);
+}
+
+.controls-overlay h1 {
+  margin-bottom: 14px;
+  font-size: 24px;
+}
+
 .difficulty-btn b {
   font-size: 16px;
   letter-spacing: 0.5px;

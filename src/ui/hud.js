@@ -10,6 +10,7 @@ export class Hud {
     bubbles = [];
     airRow;
     overlay;
+    controls;
     debug;
     flash;
     banner;
@@ -113,20 +114,57 @@ export class Hud {
             this.difficultyButtons.push(button);
         }
         panel.appendChild(choices);
-        const controls = document.createElement('ul');
-        controls.innerHTML = `
-      <li><b>WASD</b> move &middot; <b>Shift</b> or <b>double-tap W</b> sprint &middot; <b>Space</b> jump</li>
-      <li><b>Mouse</b> or <b>arrow keys</b> look around</li>
-      <li><b>Hold left click</b> or <b>Ctrl</b> mine &middot; <b>Left click</b> attack &middot; <b>Right click</b> place / use</li>
-      <li><b>1-9</b> or <b>scroll</b> select slot &middot; <b>E</b> inventory &amp; crafting &middot; <b>F</b> flight &middot; <b>Esc</b> release cursor</li>
-      <li>Mine logs, craft planks and sticks, then place a crafting table for tools.</li>
-      <li>Break wild <b>grass</b> for seeds, sow them on grass or hoed farmland, then wait for the gold ears.</li>
-      <li>Find a village: <b>right click</b> a villager to trade, and feed them bread to grow the village.</li>
-      <li class="warn">Zombies and spiders spawn in the dark &mdash; stay in the light.</li>`;
-        panel.appendChild(controls);
+        const helpRow = document.createElement('div');
+        helpRow.className = 'controls-row';
+        const help = document.createElement('button');
+        help.className = 'difficulty-btn controls-btn';
+        help.innerHTML = `<b>Controls</b><small>How to play</small>`;
+        // Stops the overlay beneath from grabbing the pointer and starting the game.
+        help.addEventListener('mousedown', (event) => {
+            event.stopPropagation();
+            this.showControls();
+        });
+        helpRow.appendChild(help);
+        panel.appendChild(helpRow);
         this.overlay.appendChild(panel);
         root.appendChild(this.overlay);
+        this.controls = document.createElement('div');
+        this.controls.className = 'overlay controls-overlay hidden';
+        const controlsPanel = document.createElement('div');
+        controlsPanel.className = 'panel';
+        controlsPanel.innerHTML = `
+      <h1>Controls</h1>
+      <ul>
+        <li><b>WASD</b> move &middot; <b>Shift</b> or <b>double-tap W</b> sprint &middot; <b>Space</b> jump</li>
+        <li><b>Mouse</b> or <b>arrow keys</b> look around</li>
+        <li><b>Hold left click</b> or <b>Ctrl</b> mine &middot; <b>Left click</b> attack &middot; <b>Right click</b> place / use</li>
+        <li><b>1-9</b> or <b>scroll</b> select slot &middot; <b>Q</b> drop held item &middot; <b>E</b> inventory &amp; crafting &middot; <b>F</b> flight &middot; <b>Esc</b> release cursor</li>
+        <li>Mine logs, craft planks and sticks, then place a crafting table for tools.</li>
+        <li>Break wild <b>grass</b> for seeds, sow them on grass or hoed farmland, then wait for the gold ears.</li>
+        <li>Find a village: <b>right click</b> a villager to trade, and feed them bread to grow the village.</li>
+        <li class="warn">Zombies and spiders spawn in the dark &mdash; stay in the light.</li>
+      </ul>`;
+        const closeControls = document.createElement('button');
+        closeControls.className = 'inv-close';
+        closeControls.textContent = 'Close';
+        controlsPanel.appendChild(closeControls);
+        this.controls.appendChild(controlsPanel);
+        this.controls.addEventListener('mousedown', (event) => {
+            event.stopPropagation();
+            if (event.target === this.controls || event.target === closeControls)
+                this.hideControls();
+        });
+        root.appendChild(this.controls);
         this.setSelected(0);
+    }
+    get controlsOpen() {
+        return !this.controls.classList.contains('hidden');
+    }
+    showControls() {
+        this.controls.classList.remove('hidden');
+    }
+    hideControls() {
+        this.controls.classList.add('hidden');
     }
     setSelected(index) {
         this.slots.forEach((slot, i) => slot.classList.toggle('selected', i === index));
@@ -192,6 +230,8 @@ export class Hud {
     }
     setOverlayVisible(visible) {
         this.overlay.classList.toggle('hidden', !visible);
+        if (!visible)
+            this.hideControls();
     }
     setDifficulty(id) {
         const order = Object.keys(DIFFICULTIES);

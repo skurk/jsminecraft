@@ -11,7 +11,11 @@ export class Inventory {
         const held = this.count(blockId);
         if (held < amount)
             return false;
-        this.counts.set(blockId, held - amount);
+        // Emptied stacks are forgotten rather than kept at zero.
+        if (held === amount)
+            this.counts.delete(blockId);
+        else
+            this.counts.set(blockId, held - amount);
         return true;
     }
     /** Owned items as [id, count] pairs, ordered by id. */

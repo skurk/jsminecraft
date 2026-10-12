@@ -141,19 +141,21 @@ function refreshHotbar() {
     hud.setSelected(hotbar.selected);
 }
 function updateOverlay() {
-    hud.setOverlayVisible(!input.locked && !menu.open && !trade.open);
+    hud.setOverlayVisible(!input.locked && !input.resuming && !menu.open && !trade.open);
 }
 menu.onClose = () => {
-    updateOverlay();
     void input.requestLock();
+    updateOverlay();
 };
 menu.onChange = refreshHotbar;
 trade.onClose = () => {
-    updateOverlay();
     void input.requestLock();
+    updateOverlay();
 };
 trade.onChange = refreshHotbar;
 input.onLockChange = updateOverlay;
+// Escape grants no user activation, so the pointer only comes back on the next input.
+input.onLockBlocked = () => hud.showToast('Press any key to resume');
 let difficulty = DIFFICULTIES[DEFAULT_DIFFICULTY];
 mobs.setDifficulty(difficulty);
 hud.setDifficulty(difficulty.id);
@@ -165,12 +167,12 @@ hud.onSelectDifficulty = (id) => {
 };
 function openMenu(atTable) {
     menu.show(atTable);
-    document.exitPointerLock();
+    input.releaseLock();
     updateOverlay();
 }
 function openTrade(villager) {
     trade.show(villager);
-    document.exitPointerLock();
+    input.releaseLock();
     updateOverlay();
 }
 /** Bread feeds a villager, otherwise the use key opens their trades. */
@@ -216,14 +218,37 @@ function sowSeeds(hit) {
     world.setBlock(target.x, target.y, target.z, Block.WheatSprout);
     refreshHotbar();
 }
+/** Q throws one of the held stack on the ground, where it stays until picked up. */
+function dropHeldItem() {
+    if (!input.locked || menu.open || trade.open || player.health <= 0)
+        return;
+    const id = heldItem();
+    if (id === null || !inventory.take(id))
+        return;
+    const direction = forwardVector();
+    const origin = player.eyePosition.addScaledVector(direction, 0.4);
+    origin.y -= 0.25;
+    items.dropItem(id, origin, direction);
+    // The last one thrown away leaves the slot free rather than an empty icon.
+    if (inventory.count(id) === 0)
+        hotbar.assign(hotbar.selected, null);
+    hand.swing();
+    refreshHotbar();
+}
 input.onKeyPress = (code) => {
     if (code === 'KeyE' || code === 'Escape') {
-        if (trade.open)
+        if (hud.controlsOpen)
+            hud.hideControls();
+        else if (trade.open)
             trade.close();
         else if (menu.open)
             menu.close();
         else if (code === 'KeyE')
             openMenu(false);
+        return;
+    }
+    if (code === 'KeyQ') {
+        dropHeldItem();
         return;
     }
     if (code === 'KeyF')

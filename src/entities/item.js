@@ -8,6 +8,10 @@ const ITEM_SIZE = 0.3;
 const GRAVITY = -24;
 const GROUND_DRAG = 3.5;
 const PICKUP_DELAY = 0.4;
+// Longer for a deliberate toss, so it does not fly straight back into the pack.
+const DROP_PICKUP_DELAY = 1.2;
+const DROP_SPEED = 5;
+const DROP_LIFT = 2.4;
 const MAGNET_RANGE = 2;
 const PICKUP_RANGE = 0.75;
 const MAGNET_SPEED = 9;
@@ -47,6 +51,7 @@ class ItemDrop {
     mesh;
     onGround = false;
     age = 0;
+    pickupDelay = PICKUP_DELAY;
     thrown = false;
     broke = false;
     hurts = 0;
@@ -66,7 +71,7 @@ class ItemDrop {
         target.y += 0.9;
         const toPlayer = target.sub(this.position);
         const distance = toPlayer.length();
-        if (this.age > PICKUP_DELAY && distance < MAGNET_RANGE && player.health > 0) {
+        if (this.age > this.pickupDelay && distance < MAGNET_RANGE && player.health > 0) {
             if (distance < PICKUP_RANGE)
                 return true;
             this.position.addScaledVector(toPlayer.normalize(), MAGNET_SPEED * dt);
@@ -163,6 +168,15 @@ export class ItemManager {
         if (this.drops.length >= MAX_DROPS)
             return;
         this.create(itemId, x, y, z);
+    }
+    /** Tosses an item out in front of the player, still free to be picked back up. */
+    dropItem(itemId, origin, direction) {
+        if (this.drops.length >= MAX_DROPS)
+            return;
+        const drop = this.create(itemId, origin.x, origin.y, origin.z);
+        drop.pickupDelay = DROP_PICKUP_DELAY;
+        drop.velocity.copy(direction).normalize().multiplyScalar(DROP_SPEED);
+        drop.velocity.y = DROP_LIFT;
     }
     /** Hurls an item forward; it shatters on the first thing it touches. */
     throwItem(itemId, origin, direction, { speed = THROW_SPEED, hurts = 0, lift = 2 } = {}) {

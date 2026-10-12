@@ -3,6 +3,11 @@ const DOUBLE_TAP_MS = 280;
 const ATTACK_KEYS = ['ControlLeft', 'ControlRight'];
 /** Browsers can report a huge bogus delta right after locking; anything past this is noise. */
 const MAX_MOVE_PER_EVENT = 300;
+// Chrome bars pointer lock for 1.25s after Escape, so the retry waits that out.
+const RELOCK_DELAY = 1350;
+/** A lock lost this soon after being asked for was taken back, not given up. */
+const REVOKE_WINDOW = 1500;
+const MAX_RELOCKS = 2;
 function clampMove(amount) {
     return Math.max(-MAX_MOVE_PER_EVENT, Math.min(MAX_MOVE_PER_EVENT, amount));
 }
@@ -19,8 +24,16 @@ export class Input {
     onKeyPress = null;
     onScroll = null;
     onLockChange = null;
+    onLockBlocked = null;
     element;
     skipNextMove = false;
+    /** True while a lock has been asked for but not granted yet. */
+    lockPending = false;
+    /** Escape bars the pointer lock until the next gesture, so the request waits for one. */
+    relockOnGesture = false;
+    lockTimer = 0;
+    lockRequestedAt = 0;
+    relockAttempts = 0;
     constructor(element) {
         this.element = element;
         window.addEventListener('keydown', (event) => {
@@ -37,6 +50,9 @@ export class Input {
                 this.lastForwardTap = now;
             }
             this.onKeyPress?.(event.code);
+            // Escape itself grants no user activation, so any later key does the re-locking.
+            if (this.relockOnGesture && event.code !== 'Escape')
+                void this.requestLock();
             // Ctrl stands in for the left mouse button, so it swings on press
             // and keeps mining while held.
             if (this.locked && ATTACK_KEYS.includes(event.code))
@@ -51,6 +67,7 @@ export class Input {
         document.addEventListener('pointerlockchange', () => {
             this.locked = document.pointerLockElement === this.element;
             if (this.locked) {
+                this.cancelRelock();
                 // The first move after locking carries the jump from the cursor's old position.
                 this.skipNextMove = true;
                 this.mouseDeltaX = 0;
@@ -59,6 +76,9 @@ export class Input {
             else {
                 this.releaseAll();
                 this.buttons.clear();
+                // Chrome grants the lock after Escape and then takes it straight back.
+                if (performance.now() - this.lockRequestedAt < REVOKE_WINDOW)
+                    this.scheduleRelock();
             }
             this.onLockChange?.(this.locked);
         });
@@ -118,13 +138,61 @@ export class Input {
     get attackKeyDown() {
         return ATTACK_KEYS.some((code) => this.keys.has(code));
     }
+    /** True while the game is waiting to get the pointer back, so no menu should show. */
+    get resuming() {
+        return this.lockPending || this.relockOnGesture;
+    }
     async requestLock() {
+        this.cancelRelock();
+        this.relockAttempts = 0;
+        this.lockPending = true;
+        this.lockRequestedAt = performance.now();
         try {
             await this.element.requestPointerLock();
+            this.lockPending = false;
         }
         catch {
-            // Browsers reject rapid re-locks; the user can simply click again.
+            this.scheduleRelock();
         }
+    }
+    /** Queues another attempt; Escape bars the lock for about a second either way. */
+    scheduleRelock() {
+        clearTimeout(this.lockTimer);
+        if (this.relockAttempts >= MAX_RELOCKS) {
+            this.lockTimer = 0;
+            this.lockPending = false;
+            this.onLockBlocked?.();
+            return;
+        }
+        this.relockAttempts++;
+        this.lockPending = true;
+        // Also re-lock on the next gesture, for browsers that insist on one.
+        this.relockOnGesture = true;
+        this.lockTimer = setTimeout(() => this.retryLock(), RELOCK_DELAY);
+    }
+    async retryLock() {
+        this.lockTimer = 0;
+        this.lockRequestedAt = performance.now();
+        try {
+            await this.element.requestPointerLock();
+            this.relockOnGesture = false;
+            this.lockPending = false;
+        }
+        catch {
+            this.scheduleRelock();
+        }
+    }
+    cancelRelock() {
+        clearTimeout(this.lockTimer);
+        this.lockTimer = 0;
+        this.relockOnGesture = false;
+        this.lockPending = false;
+    }
+    /** Deliberate release, as when a screen opens; nothing should grab the pointer back. */
+    releaseLock() {
+        this.cancelRelock();
+        this.lockRequestedAt = 0;
+        document.exitPointerLock();
     }
     consumeMouseDelta() {
         const delta = [this.mouseDeltaX, this.mouseDeltaY];
