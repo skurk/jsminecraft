@@ -26,6 +26,16 @@ import { Hud } from "./ui/hud.js";
 import { InventoryScreen } from "./ui/inventory.js";
 import { TradeScreen } from "./ui/trade.js";
 const RENDER_DISTANCE = 6;
+/** Closest the view may be pulled in when the frame rate cannot keep up. */
+const MIN_RENDER_DISTANCE = 3;
+const TARGET_FPS = 60;
+// Tolerances around the target, so a display capped at 60 does not shrink forever
+// and the view does not oscillate between two distances.
+const SHRINK_FPS = TARGET_FPS - 8;
+const GROW_FPS = TARGET_FPS - 2;
+const ADAPT_INTERVAL = 1.5;
+/** Frames are unreliable until the first chunks are in, so adapting waits. */
+const ADAPT_WARMUP = 4;
 const REACH = 6;
 const PHYSICS_TICK = 0.08;
 const FIST_DAMAGE = 2;
@@ -64,7 +74,7 @@ hudRoot.className = 'hud';
 app.appendChild(hudRoot);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color();
-const fogFar = RENDER_DISTANCE * CHUNK_SIZE;
+let fogFar = RENDER_DISTANCE * CHUNK_SIZE;
 scene.fog = new THREE.Fog(0x000000, fogFar * 0.55, fogFar);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const world = new World(scene, RENDER_DISTANCE);
@@ -419,6 +429,21 @@ function updateHeldItem() {
 function forwardVector() {
     return new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
 }
+function setRenderDistance(distance) {
+    const clamped = Math.max(MIN_RENDER_DISTANCE, Math.min(RENDER_DISTANCE, distance));
+    if (clamped === world.renderDistance)
+        return;
+    world.renderDistance = clamped;
+    fogFar = clamped * CHUNK_SIZE;
+}
+/** Pulls the view in while frames are slow, and lets it back out once they recover. */
+function adaptRenderDistance() {
+    if (fps < SHRINK_FPS)
+        setRenderDistance(world.renderDistance - 1);
+    // Streaming chunks cost frames of their own, so growing waits for a quiet moment.
+    else if (fps > GROW_FPS && world.pendingChunks === 0)
+        setRenderDistance(world.renderDistance + 1);
+}
 function overlapsPlayer(block) {
     const p = player.position;
     return (block.x + 1 > p.x - 0.3 &&
@@ -485,6 +510,7 @@ window.addEventListener('resize', () => {
 });
 const timer = new THREE.Timer();
 let fps = 0;
+let adaptTimer = 0;
 let debugTimer = 0;
 let physicsTimer = 0;
 let attackTimer = 0;
@@ -552,6 +578,11 @@ function animate() {
     world.update(player.position);
     updateHighlight();
     updateAtmosphere(dt);
+    adaptTimer += dt;
+    if (running && elapsed > ADAPT_WARMUP && adaptTimer > ADAPT_INTERVAL) {
+        adaptTimer = 0;
+        adaptRenderDistance();
+    }
     debugTimer += dt;
     if (debugTimer > 0.25) {
         debugTimer = 0;
@@ -562,7 +593,7 @@ function animate() {
         if (trade.open)
             trade.refresh();
         hud.setDebug(`${fps.toFixed(0)} fps | xyz ${p.x.toFixed(1)} ${p.y.toFixed(1)} ${p.z.toFixed(1)} | ` +
-            `chunks ${world.chunks.size} | mobs ${mobs.mobs.length} | villagers ${villagers.villagers.length} | items ${items.count} | ` +
+            `view ${world.renderDistance} | chunks ${world.chunks.size} | mobs ${mobs.mobs.length} | villagers ${villagers.villagers.length} | items ${items.count} | ` +
             `${biomeNameAt(Math.floor(p.x), Math.floor(p.z))} | ${weather.label} | ` +
             `${day.clock} ${day.isNight ? 'night' : 'day'} | ${difficulty.name}`);
     }
