@@ -1883,17 +1883,18 @@ class AudioEngine {
             return;
         this.lastPickup = now;
         const osc = this.ctx.createOscillator();
-        osc.type = 'sine';
-        const start = 420 + Math.random() * 110;
+        // Triangle, because a plain sine this quiet and this short is lost under the ambience.
+        osc.type = 'triangle';
+        const start = 520 + Math.random() * 140;
         osc.frequency.setValueAtTime(start, now);
         osc.frequency.exponentialRampToValueAtTime(start * 2.2, now + 0.035);
         const gain = this.ctx.createGain();
         gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.exponentialRampToValueAtTime(0.06, now + 0.005);
-        gain.gain.exponentialRampToValueAtTime(0.0003, now + 0.065);
+        gain.gain.exponentialRampToValueAtTime(0.06, now + 0.004);
+        gain.gain.exponentialRampToValueAtTime(0.0003, now + 0.075);
         osc.connect(gain).connect(this.master);
         osc.start(now);
-        osc.stop(now + 0.08);
+        osc.stop(now + 0.09);
     }
     /** A short knock against a block, voiced by how dense the material is. */
     playHit(surface, volume = 1) {
