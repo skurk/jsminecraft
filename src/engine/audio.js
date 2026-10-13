@@ -11,6 +11,8 @@ const ATTACK = 0.022;
 const HIT_ATTACK = 0.003;
 /** Hits closer together than this are dropped. */
 const MIN_HIT_GAP = 0.06;
+/** Enough to keep a scooped-up pile from stacking into one loud blur. */
+const MIN_PICKUP_GAP = 0.04;
 /**
  * Per-surface footstep voicing. The noise burst opens at `freq` and closes to
  * `freq * sweep` as the foot settles, which is what reads as a scuff rather
@@ -115,6 +117,7 @@ class AudioEngine {
     rain = null;
     water = null;
     lastHit = 0;
+    lastPickup = 0;
     /** True once a user gesture has let the context start. */
     get ready() {
         return this.ctx !== null && this.ctx.state === 'running';
@@ -258,6 +261,27 @@ class AudioEngine {
         source.connect(filter).connect(gain).connect(this.master);
         source.start(now);
         source.stop(now + 0.18);
+    }
+    /** Short rising "plop" as an item drops into the pack. */
+    playPickup() {
+        if (!this.ready)
+            return;
+        const now = this.ctx.currentTime;
+        if (now - this.lastPickup < MIN_PICKUP_GAP)
+            return;
+        this.lastPickup = now;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine';
+        const start = 420 + Math.random() * 110;
+        osc.frequency.setValueAtTime(start, now);
+        osc.frequency.exponentialRampToValueAtTime(start * 2.2, now + 0.035);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.06, now + 0.005);
+        gain.gain.exponentialRampToValueAtTime(0.0003, now + 0.065);
+        osc.connect(gain).connect(this.master);
+        osc.start(now);
+        osc.stop(now + 0.08);
     }
     /** A short knock against a block, voiced by how dense the material is. */
     playHit(surface, volume = 1) {

@@ -98,6 +98,7 @@ const inventory = new Inventory();
 const hotbar = new Hotbar();
 // The hotbar starts bare, so the first of anything you collect claims a free slot.
 items.onPickup = (id) => {
+    audio.playPickup();
     if (!hotbar.has(id)) {
         const free = hotbar.firstEmpty();
         if (free >= 0)
