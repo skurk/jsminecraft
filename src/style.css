@@ -116,6 +116,14 @@ canvas {
   display: none;
 }
 
+/* The menu world is shown bare, with no player indicators over it. */
+.hud.title-screen .crosshair,
+.hud.title-screen .health,
+.hud.title-screen .air,
+.hud.title-screen .hotbar {
+  display: none;
+}
+
 .bubble.empty {
   opacity: 0.15;
 }

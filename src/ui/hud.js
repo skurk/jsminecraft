@@ -19,8 +19,10 @@ export class Hud {
     fire;
     sick;
     toast;
+    root;
     difficultyButtons = [];
     constructor(root, slotCount) {
+        this.root = root;
         const crosshair = document.createElement('div');
         crosshair.className = 'crosshair';
         root.appendChild(crosshair);
@@ -232,6 +234,9 @@ export class Hud {
         this.overlay.classList.toggle('hidden', !visible);
         if (!visible)
             this.hideControls();
+    }
+    setTitleScreen(active) {
+        this.root.classList.toggle('title-screen', active);
     }
     setDifficulty(id) {
         const order = Object.keys(DIFFICULTIES);

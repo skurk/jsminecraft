@@ -50,6 +50,8 @@ const PLANT_SHARD_COLORS = {
     [Block.Wheat]: 0xcea83c,
 };
 const MINE_SWING_INTERVAL = 0.3;
+/** Radians per second the view drifts behind the difficulty screen. */
+const TITLE_PAN_SPEED = 0.06;
 const EAT_COOLDOWN = 0.8;
 /** Chance a thrown egg hatches where it lands. */
 const EGG_HATCH_CHANCE = 0.25;
@@ -520,6 +522,9 @@ let deathTimer = 0;
 let flashTimer = 0;
 let elapsed = 0;
 let lastHealth = player.health;
+// The background only pans until the first difficulty pick; pausing later keeps the view still.
+let titleScreen = true;
+const titlePanDirection = Math.random() < 0.5 ? -1 : 1;
 function animate() {
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.05);
@@ -530,6 +535,12 @@ function animate() {
     updateFluidAnimation(elapsed);
     // The world is frozen while the cursor is free, like single-player pause.
     const running = input.locked;
+    if (running && titleScreen) {
+        titleScreen = false;
+        hud.setTitleScreen(false);
+    }
+    else if (titleScreen)
+        player.yaw += titlePanDirection * TITLE_PAN_SPEED * dt;
     if (running) {
         day.update(dt);
         physicsTimer += dt;
@@ -599,10 +610,13 @@ function animate() {
             `${day.clock} ${day.isNight ? 'night' : 'day'} | ${difficulty.name}`);
     }
     renderer.render(scene, camera);
-    renderer.autoClear = false;
-    renderer.clearDepth();
-    renderer.render(hand.scene, hand.camera);
-    renderer.autoClear = true;
+    if (!titleScreen) {
+        renderer.autoClear = false;
+        renderer.clearDepth();
+        renderer.render(hand.scene, hand.camera);
+        renderer.autoClear = true;
+    }
 }
 renderer.setAnimationLoop(animate);
 refreshHotbar();
+hud.setTitleScreen(true);
