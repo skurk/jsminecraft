@@ -344,6 +344,28 @@ class AudioEngine {
             this.resonance(at, voice, 1.15 - i * 0.12 + Math.random() * 0.12, peak);
         }
     }
+    /** A creak that rises when a door swings open and falls as it shuts. */
+    playDoor(open) {
+        if (!this.ready)
+            return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(open ? 150 : 260, now);
+        osc.frequency.exponentialRampToValueAtTime(open ? 280 : 130, now + 0.22);
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(900, now);
+        filter.Q.value = 3;
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.06, now + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0004, now + 0.26);
+        osc.connect(filter).connect(gain).connect(this.master);
+        osc.start(now);
+        osc.stop(now + 0.3);
+        this.playHit('wood', 0.5);
+    }
     playFootstep(surface, volume = 1) {
         const voice = SURFACES[surface] ?? SURFACES.dirt;
         if (!this.ready)

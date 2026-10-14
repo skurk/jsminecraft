@@ -126,6 +126,12 @@ export const RECIPES = [
         requiresTable: true,
         ingredients: [{ id: Block.Cobblestone, count: 4 }],
     },
+    {
+        result: Item.Door,
+        count: 3,
+        requiresTable: true,
+        ingredients: [{ id: Block.Planks, count: 6 }],
+    },
 ];
 export function hasIngredients(inventory, recipe) {
     return recipe.ingredients.every((ingredient) => inventory.count(ingredient.id) >= ingredient.count);

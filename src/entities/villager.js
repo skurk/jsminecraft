@@ -300,6 +300,9 @@ export class Villager {
             }
         }
 
+        if (dirX !== 0 || dirZ !== 0)
+            this.openDoorAhead(world, dirX, dirZ);
+
         moveBody(world, this, dt);
 
         if (dirX !== 0 || dirZ !== 0) {
@@ -395,6 +398,14 @@ export class Villager {
         const z = Math.floor(this.position.z + dirZ * ahead);
         const feet = Math.floor(this.position.y);
         return world.isSolidAt(x, feet, z) && !world.isSolidAt(x, feet + 1, z) && !world.isSolidAt(x, feet + 2, z);
+    }
+
+    /** Villagers let themselves in rather than milling about outside their door. */
+    openDoorAhead(world, dirX, dirZ) {
+        const ahead = this.radius + 0.35;
+        const x = Math.floor(this.position.x + dirX * ahead);
+        const z = Math.floor(this.position.z + dirZ * ahead);
+        world.openDoor(x, Math.floor(this.position.y), z);
     }
 
     startBreedCooldown() {

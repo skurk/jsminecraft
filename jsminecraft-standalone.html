@@ -716,9 +716,11 @@ const { Hand } = __require("src/player/hand.js");
 const { HOTBAR_SIZE, Hotbar } = __require("src/player/hotbar.js");
 const { Inventory } = __require("src/player/inventory.js");
 const { Player } = __require("src/player/player.js");
-const { BLOCKS, Block, blockDrops, blockSurface, isBreakable, isCrop, isLava, isLog, isPlaceable, isSowable, isTillable, isWater } = __require("src/world/blocks.js");
+const { BLOCKS, Block, DOOR_FACINGS, blockDrops, blockSurface, doorId, isBreakable, isCrop, isDoor, isDoorOpen, isLava, isLog, isPlaceable, isSowable, isTillable, isWater } = __require("src/world/blocks.js");
 const { CHUNK_SIZE } = __require("src/world/chunk.js");
+const { DoorManager } = __require("src/world/doors.js");
 const { SEA_LEVEL, biomeNameAt, terrainHeight } = __require("src/world/terrain.js");
+const { nearestVillage } = __require("src/world/village.js");
 const { updateFluidAnimation } = __require("src/world/textures.js");
 const { World, raycast } = __require("src/world/world.js");
 const { Hud } = __require("src/ui/hud.js");
@@ -761,6 +763,13 @@ const LAVA_COLOR = 0x8a2a04;
 /** Half-width of the area the starting position is drawn from. */
 const SPAWN_RANGE = 4000;
 const SPAWN_ATTEMPTS = 200;
+/** Rings of regions searched for a village before giving up on ?spawnpoint=village. */
+const VILLAGE_SEARCH_RINGS = 4;
+/** Offsets from a village well to try standing on, along the road arms. */
+const VILLAGE_SPAWN_OFFSETS = [];
+for (const distance of [16, 12, 8])
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+        VILLAGE_SPAWN_OFFSETS.push([dx * distance, dz * distance]);
 const OVERCAST_COLOR = new THREE.Color(0x5c6572);
 const LIGHTNING_COLOR = new THREE.Color(0xdfe7f5);
 const app = document.querySelector('#app');
@@ -779,6 +788,8 @@ let fogFar = RENDER_DISTANCE * CHUNK_SIZE;
 scene.fog = new THREE.Fog(0x000000, fogFar * 0.55, fogFar);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const world = new World(scene, RENDER_DISTANCE);
+const doors = new DoorManager(scene, world.solidMaterial);
+world.onDoors = (chunkKey, list) => doors.sync(chunkKey, list);
 const day = new DayCycle();
 const sky = new Sky(scene);
 const weather = new Weather(scene);
@@ -809,6 +820,11 @@ items.onPickup = (id) => {
 };
 /** Dry land with headroom; the cheap height test runs first so few chunks are generated. */
 function findSpawn() {
+    if (new URLSearchParams(window.location.search).get('spawnpoint') === 'village') {
+        const village = findVillageSpawn();
+        if (village)
+            return village;
+    }
     for (let attempt = 0; attempt < SPAWN_ATTEMPTS; attempt++) {
         const x = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
         const z = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
@@ -825,6 +841,36 @@ function findSpawn() {
         return new THREE.Vector3(x + 0.5, height + 1, z + 0.5);
     }
     return new THREE.Vector3(8.5, Math.max(terrainHeight(8, 8), SEA_LEVEL) + 2, 8.5);
+}
+/** A standable spot on the outskirts of the village nearest a random column. */
+function findVillageSpawn() {
+    const x = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
+    const z = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
+    const site = nearestVillage(x, z, VILLAGE_SEARCH_RINGS);
+    if (!site)
+        return null;
+    for (const [dx, dz] of VILLAGE_SPAWN_OFFSETS) {
+        const spot = standingSpot(site.centerX + dx, site.centerZ + dz, site.level);
+        if (spot)
+            return spot;
+    }
+    return null;
+}
+/**
+ * The surface of a column near a known ground level. Villages flatten the land
+ * they sit on, so the generated terrain height is no guide there.
+ */
+function standingSpot(x, z, level) {
+    for (let y = level + 6; y > level - 8; y--) {
+        if (!world.isSolidAt(x, y, z))
+            continue;
+        if (isLava(world.getBlock(x, y, z)))
+            return null;
+        if (world.getBlock(x, y + 1, z) !== Block.Air || world.getBlock(x, y + 2, z) !== Block.Air)
+            return null;
+        return new THREE.Vector3(x + 0.5, y + 1, z + 0.5);
+    }
+    return null;
 }
 const spawnPoint = findSpawn();
 const player = new Player(spawnPoint.x, spawnPoint.y, spawnPoint.z);
@@ -930,6 +976,39 @@ function sowSeeds(hit) {
     world.setBlock(target.x, target.y, target.z, Block.WheatSprout);
     refreshHotbar();
 }
+/** A door hangs facing whoever put it up, and takes up the two blocks above the ground. */
+function placeDoor(hit) {
+    if (hit.normal.y !== 1)
+        return;
+    const base = hit.block.clone().add(hit.normal);
+    const head = { x: base.x, y: base.y + 1, z: base.z };
+    if (world.getBlock(base.x, base.y, base.z) !== Block.Air || world.getBlock(head.x, head.y, head.z) !== Block.Air)
+        return;
+    if (overlapsPlayer(base) || overlapsPlayer(head))
+        return;
+    if (!inventory.take(Item.Door))
+        return;
+    const facing = doorFacingFromYaw();
+    world.setBlock(base.x, base.y, base.z, doorId(false, facing, false));
+    world.setBlock(head.x, head.y, head.z, doorId(true, facing, false));
+    audio.playDoor(false);
+    refreshHotbar();
+}
+/** The facing whose outward normal points back at the player. */
+function doorFacingFromYaw() {
+    const fx = Math.sin(player.yaw);
+    const fz = Math.cos(player.yaw);
+    let best = 0;
+    let bestDot = -Infinity;
+    DOOR_FACINGS.forEach((facing, index) => {
+        const dot = facing.dx * fx + facing.dz * fz;
+        if (dot > bestDot) {
+            bestDot = dot;
+            best = index;
+        }
+    });
+    return best;
+}
 /** Q throws one of the held stack on the ground, where it stays until picked up. */
 function dropHeldItem() {
     if (!input.locked || menu.open || trade.open || player.health <= 0)
@@ -1026,6 +1105,13 @@ input.onMouseDown = (button) => {
             openMenu(true);
             return;
         }
+        if (isDoor(targetedBlock)) {
+            const open = !isDoorOpen(targetedBlock);
+            const bottom = world.setDoorOpen(hit.block.x, hit.block.y, hit.block.z, open);
+            doors.setOpen(hit.block.x, bottom, hit.block.z, open);
+            audio.playDoor(open);
+            return;
+        }
         // Food wins over picking fruit, so you can eat while stood under a tree.
         const held = heldItem();
         const food = foodOf(held);
@@ -1059,6 +1145,10 @@ input.onMouseDown = (button) => {
         }
         if (held === Item.Seeds) {
             sowSeeds(hit);
+            return;
+        }
+        if (held === Item.Door) {
+            placeDoor(hit);
             return;
         }
         const blockId = hotbar.item;
@@ -1262,6 +1352,7 @@ function animate() {
     audio.setUnderwater(running && player.submerged ? 1 : 0);
     explosions.update(dt);
     particles.update(dt);
+    doors.update(dt);
     updateMining(dt);
     updateHeldItem();
     hand.update(dt);
@@ -1977,6 +2068,28 @@ class AudioEngine {
             this.impact(at, voice, peak);
             this.resonance(at, voice, 1.15 - i * 0.12 + Math.random() * 0.12, peak);
         }
+    }
+    /** A creak that rises when a door swings open and falls as it shuts. */
+    playDoor(open) {
+        if (!this.ready)
+            return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(open ? 150 : 260, now);
+        osc.frequency.exponentialRampToValueAtTime(open ? 280 : 130, now + 0.22);
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(900, now);
+        filter.Q.value = 3;
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.06, now + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0004, now + 0.26);
+        osc.connect(filter).connect(gain).connect(this.master);
+        osc.start(now);
+        osc.stop(now + 0.3);
+        this.playHit('wood', 0.5);
     }
     playFootstep(surface, volume = 1) {
         const voice = SURFACES[surface] ?? SURFACES.dirt;
@@ -4179,6 +4292,7 @@ const ITEMS = {
     [Item.Emerald]: { name: 'Emerald', color: 0x2ecc71, tool: null, sprite: true },
     [Item.Bread]: { name: 'Bread', color: 0xc08a4a, tool: null, food: { heal: 4, sickness: 0 } },
     [Item.Seeds]: { name: 'Wheat Seeds', color: 0xb6b45c, tool: null, sprite: true },
+    [Item.Door]: { name: 'Oak Door', color: 0xa07a46, tool: null, sprite: true },
 };
 function isBlockItem(id) {
     return id < 100;
@@ -4332,6 +4446,17 @@ function drawFoodIcon(ctx, size, id) {
             ctx.fillRect(-s * 0.09, -s * 0.01, s * 0.18, s * 0.02);
             ctx.restore();
         }
+        return;
+    }
+    if (id === Item.Door) {
+        ctx.fillStyle = hex(ITEMS[id].color);
+        ctx.fillRect(s * 0.3, s * 0.12, s * 0.4, s * 0.76);
+        ctx.fillStyle = '#4f4336';
+        ctx.fillRect(s * 0.36, s * 0.2, s * 0.28, s * 0.18);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+        ctx.fillRect(s * 0.34, s * 0.44, s * 0.32, s * 0.03);
+        ctx.fillStyle = '#d8c07a';
+        ctx.fillRect(s * 0.61, s * 0.56, s * 0.06, s * 0.06);
         return;
     }
     if (id === Item.Arrow) {
@@ -5014,6 +5139,8 @@ const Block = {
     WheatSprout: 51,
     WheatYoung: 52,
     WheatTall: 53,
+    // First of 16 door states: lower/upper half x four facings x open/closed.
+    Door: 54,
 };
 /** Index into the procedurally generated texture atlas. */
 const Tile = {
@@ -5070,6 +5197,8 @@ const Tile = {
     WheatSprout: 50,
     WheatYoung: 51,
     WheatTall: 52,
+    DoorLower: 53,
+    DoorUpper: 54,
 };
 const BLOCKS = [
     {
@@ -5579,6 +5708,59 @@ BLOCKS.push({
     cross: true,
     placeable: false,
 });
+/**
+ * The way a door looks, as the horizontal normal of its closed face. `angle` is
+ * the Y rotation that turns the canonical north-facing door into this one.
+ */
+const DOOR_FACINGS = [
+    { dx: 0, dz: -1, angle: 0 },
+    { dx: -1, dz: 0, angle: Math.PI / 2 },
+    { dx: 0, dz: 1, angle: Math.PI },
+    { dx: 1, dz: 0, angle: -Math.PI / 2 },
+];
+const DoorFacing = { North: 0, West: 1, South: 2, East: 3 };
+const DOOR_STATES = DOOR_FACINGS.length * 4;
+// Doors carry their own geometry, so the chunk mesher skips them; only the id
+// matters here, for collision and for what the block drops.
+for (let state = 0; state < DOOR_STATES; state++) {
+    const upper = state >= DOOR_STATES / 2;
+    const open = state % 2 === 1;
+    const tile = upper ? Tile.DoorUpper : Tile.DoorLower;
+    BLOCKS.push({
+        name: 'Oak Door',
+        solid: !open,
+        liquid: false,
+        top: tile,
+        side: tile,
+        bottom: tile,
+        hardness: 0.6,
+        tool: 'axe',
+        requiresTool: false,
+        drop: Item.Door,
+        // Only the lower half yields the door, so breaking either gives one back.
+        drops: upper ? [] : [{ id: Item.Door }],
+        full: false,
+        placeable: false,
+    });
+}
+function isDoor(id) {
+    return id >= Block.Door && id < Block.Door + DOOR_STATES;
+}
+function isDoorUpper(id) {
+    return id - Block.Door >= DOOR_STATES / 2;
+}
+function isDoorOpen(id) {
+    return (id - Block.Door) % 2 === 1;
+}
+function doorFacing(id) {
+    return Math.floor(((id - Block.Door) % (DOOR_STATES / 2)) / 2);
+}
+function doorId(upper, facing, open) {
+    return Block.Door + (upper ? DOOR_STATES / 2 : 0) + facing * 2 + (open ? 1 : 0);
+}
+function toggledDoor(id) {
+    return isDoorOpen(id) ? id - 1 : id + 1;
+}
 const UNIT_BOX = [0, 0, 0, 1, 1, 1];
 /** False for blocks that do not fill their voxel, so neighbours keep their faces. */
 function isFullBlock(id) {
@@ -5694,6 +5876,8 @@ function isAir(id) {
 }
 /** Which procedural footstep voicing a block uses when walked on. */
 function blockSurface(id) {
+    if (isDoor(id))
+        return 'wood';
     switch (id) {
         case Block.Grass:
         case Block.TallGrass:
@@ -5751,6 +5935,14 @@ __exports["BLOCKS"] = BLOCKS;
 __exports["MAX_WATER_SPREAD"] = MAX_WATER_SPREAD;
 __exports["blockContactDamage"] = blockContactDamage;
 __exports["MAX_LAVA_SPREAD"] = MAX_LAVA_SPREAD;
+__exports["DOOR_FACINGS"] = DOOR_FACINGS;
+__exports["DoorFacing"] = DoorFacing;
+__exports["isDoor"] = isDoor;
+__exports["isDoorUpper"] = isDoorUpper;
+__exports["isDoorOpen"] = isDoorOpen;
+__exports["doorFacing"] = doorFacing;
+__exports["doorId"] = doorId;
+__exports["toggledDoor"] = toggledDoor;
 __exports["isFullBlock"] = isFullBlock;
 __exports["blockBox"] = blockBox;
 __exports["isCutout"] = isCutout;
@@ -5829,6 +6021,130 @@ __exports["CHUNK_SIZE"] = CHUNK_SIZE;
 __exports["CHUNK_HEIGHT"] = CHUNK_HEIGHT;
 __exports["chunkKey"] = chunkKey;
 __exports["Chunk"] = Chunk;
+},
+"src/world/doors.js": function (__exports, __require) {
+'use strict';
+const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
+const { DOOR_FACINGS, Tile } = __require("src/world/blocks.js");
+const { tileUVBounds } = __require("src/world/textures.js");
+
+/** Panel thickness, as a fraction of a block. */
+const THICKNESS = 0.1875;
+/** Radians per second, so a swing takes about a sixth of a second. */
+const SWING_SPEED = Math.PI * 3;
+const OPEN_ANGLE = -Math.PI / 2;
+// Matches the chunk mesher's per-face shading, in BoxGeometry's face order.
+const FACE_SHADES = [0.72, 0.72, 1, 0.5, 0.86, 0.86];
+
+/**
+ * One half of a door, with the hinge at the local origin and the panel reaching
+ * along +X. The lower half sits at y 0..1, the upper at y 1..2.
+ */
+function halfGeometry(tile, bottom) {
+    const geometry = new THREE.BoxGeometry(1, 1, THICKNESS);
+    geometry.translate(0.5 - THICKNESS / 2, bottom + 0.5, 0);
+    const uv = geometry.getAttribute('uv');
+    const { u0, u1, v0, v1 } = tileUVBounds(tile);
+    const colors = new Float32Array(uv.count * 3);
+    for (let i = 0; i < uv.count; i++) {
+        uv.setXY(i, u0 + (u1 - u0) * uv.getX(i), v0 + (v1 - v0) * uv.getY(i));
+        const shade = FACE_SHADES[Math.floor(i / 4)];
+        colors[i * 3] = shade;
+        colors[i * 3 + 1] = shade;
+        colors[i * 3 + 2] = shade;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('blockLight', new THREE.BufferAttribute(new Float32Array(uv.count), 1));
+    return geometry;
+}
+
+/** World position of the hinge pin for a door block, given its facing. */
+function hingePosition(x, y, z, facing) {
+    const { angle } = DOOR_FACINGS[facing];
+    // Canonical hinge corner of a north-facing door, relative to the voxel centre.
+    const a = THICKNESS / 2 - 0.5;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return [x + 0.5 + a * (cos + sin), y, z + 0.5 + a * (cos - sin)];
+}
+
+/**
+ * Draws and animates every door in the loaded chunks. Doors are kept out of the
+ * chunk meshes so they can swing on their hinge instead of popping between states.
+ */
+class DoorManager {
+    scene;
+    material;
+    geometries;
+    /** Block position key to its swinging mesh. */
+    doors = new Map();
+    /** Chunk key to the door keys it owns, so unloading can clean up. */
+    chunks = new Map();
+
+    constructor(scene, material) {
+        this.scene = scene;
+        this.material = material;
+        this.geometries = [halfGeometry(Tile.DoorLower, 0), halfGeometry(Tile.DoorUpper, 1)];
+    }
+
+    /** Replaces the doors of one chunk with what its latest mesh pass found. */
+    sync(chunkKey, entries) {
+        const previous = this.chunks.get(chunkKey) ?? [];
+        const keys = [];
+        for (const entry of entries) {
+            const key = `${entry.x},${entry.y},${entry.z}`;
+            keys.push(key);
+            let door = this.doors.get(key);
+            const target = entry.open ? OPEN_ANGLE : 0;
+            if (!door) {
+                const group = new THREE.Group();
+                for (const geometry of this.geometries)
+                    group.add(new THREE.Mesh(geometry, this.material));
+                group.position.set(...hingePosition(entry.x, entry.y, entry.z, entry.facing));
+                this.scene.add(group);
+                // A door that streams in is already at rest, so it must not swing.
+                door = { group, angle: target };
+                this.doors.set(key, door);
+            }
+            door.base = DOOR_FACINGS[entry.facing].angle;
+            door.target = target;
+            door.group.rotation.y = door.base + door.angle;
+        }
+        for (const key of previous) {
+            if (!keys.includes(key))
+                this.drop(key);
+        }
+        this.chunks.set(chunkKey, keys);
+    }
+
+    /** Starts the swing straight away, ahead of the chunk re-mesh that confirms it. */
+    setOpen(x, y, z, open) {
+        const door = this.doors.get(`${x},${y},${z}`);
+        if (door)
+            door.target = open ? OPEN_ANGLE : 0;
+    }
+
+    drop(key) {
+        const door = this.doors.get(key);
+        if (!door)
+            return;
+        this.scene.remove(door.group);
+        this.doors.delete(key);
+    }
+
+    update(dt) {
+        for (const door of this.doors.values()) {
+            if (door.angle === door.target)
+                continue;
+            const step = SWING_SPEED * dt;
+            const remaining = door.target - door.angle;
+            door.angle = Math.abs(remaining) <= step ? door.target : door.angle + Math.sign(remaining) * step;
+            door.group.rotation.y = door.base + door.angle;
+        }
+    }
+}
+
+__exports["DoorManager"] = DoorManager;
 },
 "src/world/terrain.js": function (__exports, __require) {
 'use strict';
@@ -6149,6 +6465,443 @@ __exports["BIOMES"] = BIOMES;
 __exports["biomeAt"] = biomeAt;
 __exports["biomeNameAt"] = biomeNameAt;
 __exports["generateChunk"] = generateChunk;
+},
+"src/world/village.js": function (__exports, __require) {
+'use strict';
+const { mulberry32 } = __require("src/engine/noise.js");
+const { Block, DoorFacing, doorId } = __require("src/world/blocks.js");
+const { CHUNK_HEIGHT, CHUNK_SIZE } = __require("src/world/chunk.js");
+const { SEA_LEVEL, terrainHeight } = __require("src/world/heightmap.js");
+
+/** Professions that have a matching job site block in the village. */
+const JOB_BLOCKS = {
+    farmer: Block.Composter,
+    toolsmith: Block.SmithingTable,
+    fletcher: Block.FletchingTable,
+};
+
+const SEED = 20251002;
+/** One village candidate per region; the margin keeps it inside its own region. */
+const REGION = 192;
+const REGION_MARGIN = 48;
+const VILLAGE_RADIUS = 30;
+/** Rejects hillsides, so buildings never end up floating or buried. */
+const MAX_SLOPE = 6;
+const CACHE_LIMIT = 32;
+
+const PROBES = [
+    [0, 0],
+    [-18, -18],
+    [18, -18],
+    [-18, 18],
+    [18, 18],
+    [-24, 0],
+    [24, 0],
+    [0, -24],
+    [0, 24],
+];
+
+/** [x, z, width, depth] of each building lot, relative to the well. */
+const LOTS = [
+    [-14, -13, 9, 9],
+    [6, -13, 9, 9],
+    [-14, 5, 9, 9],
+    [6, 5, 9, 9],
+    [-24, -4, 8, 9],
+    [17, -4, 8, 9],
+    [-4, -24, 9, 8],
+    [-4, 17, 9, 8],
+];
+
+/** Short path patches linking the main road arms to the corner lots. */
+const CONNECTORS = [
+    [-10, 2],
+    [8, 2],
+    [-10, -4],
+    [8, -4],
+];
+
+const LAMP_POSTS = [
+    [13, 2],
+    [-13, -2],
+    [2, -13],
+    [-2, 13],
+];
+
+const PATH_ARM_START = 4;
+const PATH_ARM_END = 16;
+
+const cache = new Map();
+
+function regionOf(value) {
+    return Math.floor(value / REGION);
+}
+
+/** The village for a region, or null when the terrain there is unsuitable. */
+function villageInRegion(rx, rz) {
+    const key = `${rx},${rz}`;
+    if (cache.has(key))
+        return cache.get(key) ?? null;
+    const site = createSite(rx, rz, key);
+    if (cache.size >= CACHE_LIMIT)
+        cache.delete(cache.keys().next().value);
+    cache.set(key, site);
+    return site;
+}
+
+/** Villages whose centre lies within `radius` of the given world column. */
+function villagesNear(x, z, radius) {
+    const found = [];
+    const rx = regionOf(x);
+    const rz = regionOf(z);
+    for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            const site = villageInRegion(rx + dx, rz + dz);
+            if (!site)
+                continue;
+            if (Math.hypot(site.centerX - x, site.centerZ - z) <= radius)
+                found.push(site);
+        }
+    }
+    return found;
+}
+
+/** The closest village to a column, searching one ring of regions outwards at a time. */
+function nearestVillage(x, z, maxRings) {
+    const rx = regionOf(x);
+    const rz = regionOf(z);
+    for (let ring = 0; ring <= maxRings; ring++) {
+        let closest = null;
+        let closestDistance = Infinity;
+        for (let dz = -ring; dz <= ring; dz++) {
+            for (let dx = -ring; dx <= ring; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring)
+                    continue;
+                const site = villageInRegion(rx + dx, rz + dz);
+                if (!site)
+                    continue;
+                const distance = Math.hypot(site.centerX - x, site.centerZ - z);
+                if (distance < closestDistance) {
+                    closest = site;
+                    closestDistance = distance;
+                }
+            }
+        }
+        if (closest)
+            return closest;
+    }
+    return null;
+}
+
+/** Stamps every village overlapping the chunk; called during terrain generation. */
+function applyVillages(chunk) {
+    const originX = chunk.cx * CHUNK_SIZE;
+    const originZ = chunk.cz * CHUNK_SIZE;
+    const rx = regionOf(originX);
+    const rz = regionOf(originZ);
+    for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            const site = villageInRegion(rx + dx, rz + dz);
+            if (!site)
+                continue;
+            if (site.centerX + VILLAGE_RADIUS < originX || site.centerX - VILLAGE_RADIUS >= originX + CHUNK_SIZE)
+                continue;
+            if (site.centerZ + VILLAGE_RADIUS < originZ || site.centerZ - VILLAGE_RADIUS >= originZ + CHUNK_SIZE)
+                continue;
+            stampPlan(site.plan, chunk, originX, originZ);
+        }
+    }
+}
+
+/** True inside the flattened footprint, where trees must not grow. */
+function insideVillage(x, z) {
+    const site = villageInRegion(regionOf(x), regionOf(z));
+    if (!site)
+        return false;
+    return Math.abs(site.centerX - x) <= VILLAGE_RADIUS && Math.abs(site.centerZ - z) <= VILLAGE_RADIUS;
+}
+
+function stampPlan(plan, chunk, originX, originZ) {
+    const { xs, ys, zs, ids } = plan;
+    for (let i = 0; i < ids.length; i++) {
+        const lx = xs[i] - originX;
+        if (lx < 0 || lx >= CHUNK_SIZE)
+            continue;
+        const lz = zs[i] - originZ;
+        if (lz < 0 || lz >= CHUNK_SIZE)
+            continue;
+        chunk.set(lx, ys[i], lz, ids[i]);
+    }
+}
+
+function createSite(rx, rz, key) {
+    const rand = mulberry32((Math.imul(rx, 73856093) ^ Math.imul(rz, 19349663) ^ SEED) >>> 0);
+    const span = REGION - REGION_MARGIN * 2;
+    const centerX = rx * REGION + REGION_MARGIN + Math.floor(rand() * span);
+    const centerZ = rz * REGION + REGION_MARGIN + Math.floor(rand() * span);
+
+    let lowest = Infinity;
+    let highest = -Infinity;
+    for (const [dx, dz] of PROBES) {
+        const height = terrainHeight(centerX + dx, centerZ + dz);
+        if (height <= SEA_LEVEL + 1)
+            return null;
+        lowest = Math.min(lowest, height);
+        highest = Math.max(highest, height);
+    }
+    if (highest - lowest > MAX_SLOPE)
+        return null;
+
+    return buildPlan(key, centerX, centerZ, terrainHeight(centerX, centerZ), rand);
+}
+
+function buildPlan(key, centerX, centerZ, level, rand) {
+    const blocks = new Map();
+    const beds = [];
+    const jobs = [];
+
+    const set = (x, y, z, id) => {
+        const lx = x - centerX;
+        const lz = z - centerZ;
+        if (Math.abs(lx) > VILLAGE_RADIUS || Math.abs(lz) > VILLAGE_RADIUS)
+            return;
+        if (y < 1 || y >= CHUNK_HEIGHT)
+            return;
+        blocks.set(packKey(lx, y, lz), id);
+    };
+
+    /** Levels a rectangle to `level`, filling any hollow below and clearing above. */
+    const flatten = (x0, z0, w, d, surface, clearance) => {
+        for (let x = x0; x < x0 + w; x++) {
+            for (let z = z0; z < z0 + d; z++) {
+                const ground = terrainHeight(x, z);
+                set(x, level, z, surface);
+                for (let y = level - 1; y > Math.min(ground, level) - 3; y--)
+                    set(x, y, z, Block.Dirt);
+                const top = Math.max(level + clearance, ground + 1);
+                for (let y = level + 1; y <= top; y++)
+                    set(x, y, z, Block.Air);
+            }
+        }
+    };
+
+    const roads = () => {
+        for (let t = PATH_ARM_START; t <= PATH_ARM_END; t++) {
+            flatten(centerX + t, centerZ - 1, 1, 3, Block.Path, 4);
+            flatten(centerX - t, centerZ - 1, 1, 3, Block.Path, 4);
+            flatten(centerX - 1, centerZ + t, 3, 1, Block.Path, 4);
+            flatten(centerX - 1, centerZ - t, 3, 1, Block.Path, 4);
+        }
+        for (const [ox, oz] of CONNECTORS) {
+            flatten(centerX + ox, centerZ + oz, 3, 3, Block.Path, 4);
+        }
+    };
+
+    const well = () => {
+        flatten(centerX - 3, centerZ - 3, 7, 7, Block.Path, 7);
+        for (let x = -2; x <= 2; x++) {
+            for (let z = -2; z <= 2; z++)
+                set(centerX + x, level, centerZ + z, Block.StoneBricks);
+        }
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                if (x === 0 && z === 0)
+                    continue;
+                set(centerX + x, level + 1, centerZ + z, Block.Cobblestone);
+            }
+        }
+        for (let y = level - 2; y <= level + 1; y++)
+            set(centerX, y, centerZ, Block.Water);
+        for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+            set(centerX + x, level + 2, centerZ + z, Block.Log);
+            set(centerX + x, level + 3, centerZ + z, Block.Log);
+        }
+        for (let x = -2; x <= 2; x++) {
+            for (let z = -2; z <= 2; z++)
+                set(centerX + x, level + 4, centerZ + z, Block.Planks);
+        }
+    };
+
+    const lamps = () => {
+        for (const [ox, oz] of LAMP_POSTS) {
+            flatten(centerX + ox, centerZ + oz, 1, 1, Block.Path, 5);
+            for (let y = level + 1; y <= level + 3; y++)
+                set(centerX + ox, y, centerZ + oz, Block.Log);
+            set(centerX + ox, level + 4, centerZ + oz, Block.Hay);
+        }
+    };
+
+    const house = (x0, z0, w, d, job) => {
+        flatten(x0, z0, w, d, Block.Planks, 8);
+        const x1 = x0 + w - 1;
+        const z1 = z0 + d - 1;
+        for (let x = x0; x <= x1; x++) {
+            for (let z = z0; z <= z1; z++) {
+                const onEdge = x === x0 || x === x1 || z === z0 || z === z1;
+                if (!onEdge)
+                    continue;
+                const corner = (x === x0 || x === x1) && (z === z0 || z === z1);
+                for (let y = level + 1; y <= level + 3; y++) {
+                    const material = corner ? Block.Log : y === level + 1 ? Block.Cobblestone : Block.Planks;
+                    set(x, y, z, material);
+                }
+                // Windows sit at eye height, skipping the blocks beside the corners.
+                if (!corner && (x - x0 + z - z0) % 3 === 0)
+                    set(x, level + 2, z, Block.Glass);
+            }
+        }
+        carveDoor(set, x0, z0, w, d, level, centerX, centerZ);
+        for (let x = x0 - 1; x <= x1 + 1; x++) {
+            for (let z = z0 - 1; z <= z1 + 1; z++)
+                set(x, level + 4, z, Block.Planks);
+        }
+        for (let x = x0 + 1; x <= x1 - 1; x++) {
+            for (let z = z0 + 1; z <= z1 - 1; z++)
+                set(x, level + 5, z, Block.Log);
+        }
+        set(x0 + 1, level + 1, z0 + 1, Block.Bed);
+        set(x0 + 1, level + 1, z0 + 2, Block.Bed);
+        beds.push({ x: x0 + 1, y: level + 1, z: z0 + 1 });
+        if (d >= 9 && rand() < 0.6) {
+            set(x1 - 1, level + 1, z1 - 1, Block.Bed);
+            set(x1 - 1, level + 1, z1 - 2, Block.Bed);
+            beds.push({ x: x1 - 1, y: level + 1, z: z1 - 1 });
+        }
+        if (job) {
+            const jx = x0 + 1;
+            const jz = z1 - 1;
+            set(jx, level + 1, jz, JOB_BLOCKS[job]);
+            jobs.push({ x: jx, y: level + 1, z: jz, profession: job });
+        }
+        else {
+            set(x1 - 1, level + 1, z0 + 1, Block.CraftingTable);
+        }
+    };
+
+    const farm = (x0, z0, w, d) => {
+        flatten(x0, z0, w, d, Block.Farmland, 6);
+        const x1 = x0 + w - 1;
+        const z1 = z0 + d - 1;
+        const channel = z0 + Math.floor(d / 2);
+        for (let x = x0; x <= x1; x++) {
+            for (let z = z0; z <= z1; z++) {
+                if (x === x0 || x === x1 || z === z0 || z === z1) {
+                    set(x, level, z, Block.Path);
+                    continue;
+                }
+                if (z === channel) {
+                    set(x, level, z, Block.Water);
+                    continue;
+                }
+                set(x, level, z, Block.Farmland);
+                set(x, level + 1, z, Block.Wheat);
+            }
+        }
+        set(x0, level + 1, z0, Block.Hay);
+        set(x0, level + 2, z0, Block.Hay);
+        set(x1, level + 1, z1, Block.Hay);
+    };
+
+    const bellPost = () => {
+        const x = centerX + 3;
+        const z = centerZ + 3;
+        set(x, level + 1, z, Block.Log);
+        set(x, level + 2, z, Block.Log);
+        set(x, level + 3, z, Block.Bell);
+    };
+
+    roads();
+    well();
+    bellPost();
+    lamps();
+
+    const kinds = shuffle(['farmer', 'toolsmith', 'fletcher', 'house', 'house', 'farm', 'farm', 'house'], rand);
+    LOTS.forEach(([ox, oz, w, d], index) => {
+        const kind = kinds[index];
+        const x0 = centerX + ox;
+        const z0 = centerZ + oz;
+        if (kind === 'farm')
+            farm(x0, z0, w, d);
+        else
+            house(x0, z0, w, d, kind === 'house' ? null : kind);
+    });
+
+    return {
+        key,
+        centerX,
+        centerZ,
+        level,
+        beds,
+        jobs,
+        bell: { x: centerX + 3, y: level + 3, z: centerZ + 3 },
+        plan: freezePlan(blocks, centerX, centerZ),
+    };
+}
+
+/** Hangs a door in the wall that faces the village centre. */
+function carveDoor(set, x0, z0, w, d, level, centerX, centerZ) {
+    const midX = x0 + Math.floor(w / 2);
+    const midZ = z0 + Math.floor(d / 2);
+    const toCenterX = centerX - midX;
+    const toCenterZ = centerZ - midZ;
+    let doorX = midX;
+    let doorZ = midZ;
+    let facing;
+    if (Math.abs(toCenterX) > Math.abs(toCenterZ)) {
+        doorX = toCenterX > 0 ? x0 + w - 1 : x0;
+        facing = toCenterX > 0 ? DoorFacing.East : DoorFacing.West;
+    }
+    else {
+        doorZ = toCenterZ > 0 ? z0 + d - 1 : z0;
+        facing = toCenterZ > 0 ? DoorFacing.South : DoorFacing.North;
+    }
+    set(doorX, level + 1, doorZ, doorId(false, facing, false));
+    set(doorX, level + 2, doorZ, doorId(true, facing, false));
+}
+
+function shuffle(values, rand) {
+    const out = [...values];
+    for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+}
+
+const KEY_SPAN = VILLAGE_RADIUS * 2 + 1;
+
+function packKey(lx, y, lz) {
+    return ((lx + VILLAGE_RADIUS) * KEY_SPAN + (lz + VILLAGE_RADIUS)) * CHUNK_HEIGHT + y;
+}
+
+/** Flattens the build map into typed arrays so chunk stamping stays cheap. */
+function freezePlan(blocks, centerX, centerZ) {
+    const size = blocks.size;
+    const xs = new Int32Array(size);
+    const ys = new Uint8Array(size);
+    const zs = new Int32Array(size);
+    const ids = new Uint8Array(size);
+    let i = 0;
+    for (const [key, id] of blocks) {
+        const y = key % CHUNK_HEIGHT;
+        const flat = (key - y) / CHUNK_HEIGHT;
+        const lz = (flat % KEY_SPAN) - VILLAGE_RADIUS;
+        const lx = (flat - (lz + VILLAGE_RADIUS)) / KEY_SPAN - VILLAGE_RADIUS;
+        xs[i] = centerX + lx;
+        ys[i] = y;
+        zs[i] = centerZ + lz;
+        ids[i] = id;
+        i++;
+    }
+    return { xs, ys, zs, ids };
+}
+
+__exports["JOB_BLOCKS"] = JOB_BLOCKS;
+__exports["villageInRegion"] = villageInRegion;
+__exports["villagesNear"] = villagesNear;
+__exports["nearestVillage"] = nearestVillage;
+__exports["applyVillages"] = applyVillages;
+__exports["insideVillage"] = insideVillage;
 },
 "src/world/textures.js": function (__exports, __require) {
 'use strict';
@@ -6620,6 +7373,23 @@ function paintBellSide(ctx, rand) {
         }
     }
 }
+/** Panelled planks; the upper half carries a window, the lower half a handle. */
+function paintDoor(ctx, tile, upper, rand) {
+    const [ox, oy] = tileOrigin(tile);
+    const wood = [160, 124, 74];
+    const pane = [128, 176, 198];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const frame = x < 2 || x > 13 || (upper && y < 2) || (!upper && y > 13);
+            const window = upper && !frame && y > 2 && y < 8 && x > 3 && x < 12;
+            const handle = !upper && y > 6 && y < 9 && x > 10 && x < 13;
+            const seam = !frame && y % 5 === 0 ? -26 : 0;
+            const base = window ? pane : wood;
+            const tone = frame ? -24 : handle ? 46 : seam;
+            px(ctx, ox + x, oy + y, shade(base, tone + (rand() * 2 - 1) * 8));
+        }
+    }
+}
 function buildAtlasCanvas() {
     const canvas = document.createElement('canvas');
     canvas.width = ATLAS_COLS * TILE_PX;
@@ -6680,6 +7450,8 @@ function buildAtlasCanvas() {
     paintFletchingSide(ctx, rand);
     paintBellTop(ctx, rand);
     paintBellSide(ctx, rand);
+    paintDoor(ctx, Tile.DoorLower, false, rand);
+    paintDoor(ctx, Tile.DoorUpper, true, rand);
     return canvas;
 }
 const atlasCanvas = buildAtlasCanvas();
@@ -6779,7 +7551,7 @@ __exports["drawTileTo"] = drawTileTo;
 "src/world/world.js": function (__exports, __require) {
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
-const { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, canPlantStay, hasGravity, isLava, isLiquid, isPlant, isSolid, isWater, lavaFlowId, lavaLevel, nextCropStage, waterFlowId, waterLevel } = __require("src/world/blocks.js");
+const { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, canPlantStay, hasGravity, isDoor, isDoorOpen, isDoorUpper, isLava, isLiquid, isPlant, isSolid, isWater, lavaFlowId, lavaLevel, nextCropStage, toggledDoor, waterFlowId, waterLevel } = __require("src/world/blocks.js");
 const { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey } = __require("src/world/chunk.js");
 const { buildChunkGeometry, TORCH_RANGE } = __require("src/world/mesher.js");
 const { generateChunk } = __require("src/world/terrain.js");
@@ -6792,6 +7564,8 @@ const LAVA_TICKS = 19;
 // Ticks a crop spends in each stage, so a field ripens in roughly one to two minutes.
 const CROP_MIN_TICKS = 220;
 const CROP_MAX_TICKS = 460;
+/** Blocks of soil a crop may sit from water and still be watered. */
+const CROP_WATER_RANGE = 4;
 function cropTicks() {
     return CROP_MIN_TICKS + Math.floor(Math.random() * (CROP_MAX_TICKS - CROP_MIN_TICKS));
 }
@@ -6822,6 +7596,8 @@ class World {
     torches = new Map();
     /** Position key to ticks left before the crop there moves to its next stage. */
     growing = new Map();
+    /** Called with a chunk key and the doors it contains after every re-mesh. */
+    onDoors = null;
     daylightUniform = { value: 1 };
     constructor(scene, renderDistance = 6) {
         this.scene = scene;
@@ -6891,6 +7667,12 @@ class World {
             return;
         chunk.set(lx, y, lz, id);
         chunk.dirty = true;
+        // Breaking one half of a door takes the other half with it.
+        if (isDoor(previous) && id === Block.Air) {
+            const otherY = isDoorUpper(previous) ? y - 1 : y + 1;
+            if (isDoor(this.getBlock(x, otherY, z)))
+                this.setBlock(x, otherY, z, Block.Air);
+        }
         const key = `${x},${y},${z}`;
         if (nextCropStage(id) !== null)
             this.growing.set(key, cropTicks());
@@ -6979,9 +7761,24 @@ class World {
                 this.growing.delete(key);
                 continue;
             }
+            // Dry soil holds the stage back, and is checked again a stage later.
+            if (!this.soilWatered(x, y - 1, z)) {
+                this.growing.set(key, cropTicks());
+                continue;
+            }
             // setBlock re-registers the new stage, or drops it once ripe.
             this.setBlock(x, y, z, next);
         }
+    }
+    /** True when water sits within reach of the soil, at its own level or just below. */
+    soilWatered(x, y, z) {
+        for (let dx = -CROP_WATER_RANGE; dx <= CROP_WATER_RANGE; dx++) {
+            for (let dz = -CROP_WATER_RANGE; dz <= CROP_WATER_RANGE; dz++) {
+                if (isWater(this.getBlock(x + dx, y, z + dz)) || isWater(this.getBlock(x + dx, y - 1, z + dz)))
+                    return true;
+            }
+        }
+        return false;
     }
     flowWater(x, y, z, id) {
         const level = waterLevel(id);
@@ -7066,6 +7863,27 @@ class World {
     isSolidAt(x, y, z) {
         return isSolid(this.getBlock(x, y, z));
     }
+    /** Swings both halves of the door at this spot; returns its lower block's y. */
+    setDoorOpen(x, y, z, open) {
+        const id = this.getBlock(x, y, z);
+        if (!isDoor(id))
+            return null;
+        const base = isDoorUpper(id) ? y - 1 : y;
+        for (let dy = 0; dy <= 1; dy++) {
+            const half = this.getBlock(x, base + dy, z);
+            if (isDoor(half) && isDoorOpen(half) !== open)
+                this.setBlock(x, base + dy, z, toggledDoor(half));
+        }
+        return base;
+    }
+    /** Lets a walker push a shut door open, leaving anything else alone. */
+    openDoor(x, y, z) {
+        const id = this.getBlock(x, y, z);
+        if (!isDoor(id) || isDoorOpen(id))
+            return false;
+        this.setDoorOpen(x, y, z, true);
+        return true;
+    }
     isLiquidAt(x, y, z) {
         return isLiquid(this.getBlock(x, y, z));
     }
@@ -7140,6 +7958,7 @@ class World {
             if (distSq > (r + 2) * (r + 2)) {
                 chunk.dispose(this.scene);
                 this.chunks.delete(chunkKey(chunk.cx, chunk.cz));
+                this.onDoors?.(chunkKey(chunk.cx, chunk.cz), []);
                 this.forgetTorches(chunk.cx, chunk.cz);
                 this.forgetCrops(chunk.cx, chunk.cz);
                 continue;
@@ -7189,8 +8008,9 @@ class World {
         this.pendingUpdates.add(`${x},${y},${z}`);
     }
     rebuild(chunk) {
-        const { solid, cutout, water, lava } = buildChunkGeometry(chunk, (x, y, z) => this.getBlock(x, y, z), this.torchesNear(chunk.cx, chunk.cz));
+        const { solid, cutout, water, lava, doors } = buildChunkGeometry(chunk, (x, y, z) => this.getBlock(x, y, z), this.torchesNear(chunk.cx, chunk.cz));
         chunk.dispose(this.scene);
+        this.onDoors?.(chunkKey(chunk.cx, chunk.cz), doors);
         const originX = chunk.cx * CHUNK_SIZE;
         const originZ = chunk.cz * CHUNK_SIZE;
         const place = (geometry, material, renderOrder) => {
@@ -7983,413 +8803,10 @@ const Item = {
     Emerald: 210,
     Bread: 211,
     Seeds: 212,
+    Door: 213,
 };
 
 __exports["Item"] = Item;
-},
-"src/world/village.js": function (__exports, __require) {
-'use strict';
-const { mulberry32 } = __require("src/engine/noise.js");
-const { Block } = __require("src/world/blocks.js");
-const { CHUNK_HEIGHT, CHUNK_SIZE } = __require("src/world/chunk.js");
-const { SEA_LEVEL, terrainHeight } = __require("src/world/heightmap.js");
-
-/** Professions that have a matching job site block in the village. */
-const JOB_BLOCKS = {
-    farmer: Block.Composter,
-    toolsmith: Block.SmithingTable,
-    fletcher: Block.FletchingTable,
-};
-
-const SEED = 20251002;
-/** One village candidate per region; the margin keeps it inside its own region. */
-const REGION = 192;
-const REGION_MARGIN = 48;
-const VILLAGE_RADIUS = 30;
-/** Rejects hillsides, so buildings never end up floating or buried. */
-const MAX_SLOPE = 6;
-const CACHE_LIMIT = 32;
-
-const PROBES = [
-    [0, 0],
-    [-18, -18],
-    [18, -18],
-    [-18, 18],
-    [18, 18],
-    [-24, 0],
-    [24, 0],
-    [0, -24],
-    [0, 24],
-];
-
-/** [x, z, width, depth] of each building lot, relative to the well. */
-const LOTS = [
-    [-14, -13, 9, 9],
-    [6, -13, 9, 9],
-    [-14, 5, 9, 9],
-    [6, 5, 9, 9],
-    [-24, -4, 8, 9],
-    [17, -4, 8, 9],
-    [-4, -24, 9, 8],
-    [-4, 17, 9, 8],
-];
-
-/** Short path patches linking the main road arms to the corner lots. */
-const CONNECTORS = [
-    [-10, 2],
-    [8, 2],
-    [-10, -4],
-    [8, -4],
-];
-
-const LAMP_POSTS = [
-    [13, 2],
-    [-13, -2],
-    [2, -13],
-    [-2, 13],
-];
-
-const PATH_ARM_START = 4;
-const PATH_ARM_END = 16;
-
-const cache = new Map();
-
-function regionOf(value) {
-    return Math.floor(value / REGION);
-}
-
-/** The village for a region, or null when the terrain there is unsuitable. */
-function villageInRegion(rx, rz) {
-    const key = `${rx},${rz}`;
-    if (cache.has(key))
-        return cache.get(key) ?? null;
-    const site = createSite(rx, rz, key);
-    if (cache.size >= CACHE_LIMIT)
-        cache.delete(cache.keys().next().value);
-    cache.set(key, site);
-    return site;
-}
-
-/** Villages whose centre lies within `radius` of the given world column. */
-function villagesNear(x, z, radius) {
-    const found = [];
-    const rx = regionOf(x);
-    const rz = regionOf(z);
-    for (let dz = -1; dz <= 1; dz++) {
-        for (let dx = -1; dx <= 1; dx++) {
-            const site = villageInRegion(rx + dx, rz + dz);
-            if (!site)
-                continue;
-            if (Math.hypot(site.centerX - x, site.centerZ - z) <= radius)
-                found.push(site);
-        }
-    }
-    return found;
-}
-
-/** Stamps every village overlapping the chunk; called during terrain generation. */
-function applyVillages(chunk) {
-    const originX = chunk.cx * CHUNK_SIZE;
-    const originZ = chunk.cz * CHUNK_SIZE;
-    const rx = regionOf(originX);
-    const rz = regionOf(originZ);
-    for (let dz = -1; dz <= 1; dz++) {
-        for (let dx = -1; dx <= 1; dx++) {
-            const site = villageInRegion(rx + dx, rz + dz);
-            if (!site)
-                continue;
-            if (site.centerX + VILLAGE_RADIUS < originX || site.centerX - VILLAGE_RADIUS >= originX + CHUNK_SIZE)
-                continue;
-            if (site.centerZ + VILLAGE_RADIUS < originZ || site.centerZ - VILLAGE_RADIUS >= originZ + CHUNK_SIZE)
-                continue;
-            stampPlan(site.plan, chunk, originX, originZ);
-        }
-    }
-}
-
-/** True inside the flattened footprint, where trees must not grow. */
-function insideVillage(x, z) {
-    const site = villageInRegion(regionOf(x), regionOf(z));
-    if (!site)
-        return false;
-    return Math.abs(site.centerX - x) <= VILLAGE_RADIUS && Math.abs(site.centerZ - z) <= VILLAGE_RADIUS;
-}
-
-function stampPlan(plan, chunk, originX, originZ) {
-    const { xs, ys, zs, ids } = plan;
-    for (let i = 0; i < ids.length; i++) {
-        const lx = xs[i] - originX;
-        if (lx < 0 || lx >= CHUNK_SIZE)
-            continue;
-        const lz = zs[i] - originZ;
-        if (lz < 0 || lz >= CHUNK_SIZE)
-            continue;
-        chunk.set(lx, ys[i], lz, ids[i]);
-    }
-}
-
-function createSite(rx, rz, key) {
-    const rand = mulberry32((Math.imul(rx, 73856093) ^ Math.imul(rz, 19349663) ^ SEED) >>> 0);
-    const span = REGION - REGION_MARGIN * 2;
-    const centerX = rx * REGION + REGION_MARGIN + Math.floor(rand() * span);
-    const centerZ = rz * REGION + REGION_MARGIN + Math.floor(rand() * span);
-
-    let lowest = Infinity;
-    let highest = -Infinity;
-    for (const [dx, dz] of PROBES) {
-        const height = terrainHeight(centerX + dx, centerZ + dz);
-        if (height <= SEA_LEVEL + 1)
-            return null;
-        lowest = Math.min(lowest, height);
-        highest = Math.max(highest, height);
-    }
-    if (highest - lowest > MAX_SLOPE)
-        return null;
-
-    return buildPlan(key, centerX, centerZ, terrainHeight(centerX, centerZ), rand);
-}
-
-function buildPlan(key, centerX, centerZ, level, rand) {
-    const blocks = new Map();
-    const beds = [];
-    const jobs = [];
-
-    const set = (x, y, z, id) => {
-        const lx = x - centerX;
-        const lz = z - centerZ;
-        if (Math.abs(lx) > VILLAGE_RADIUS || Math.abs(lz) > VILLAGE_RADIUS)
-            return;
-        if (y < 1 || y >= CHUNK_HEIGHT)
-            return;
-        blocks.set(packKey(lx, y, lz), id);
-    };
-
-    /** Levels a rectangle to `level`, filling any hollow below and clearing above. */
-    const flatten = (x0, z0, w, d, surface, clearance) => {
-        for (let x = x0; x < x0 + w; x++) {
-            for (let z = z0; z < z0 + d; z++) {
-                const ground = terrainHeight(x, z);
-                set(x, level, z, surface);
-                for (let y = level - 1; y > Math.min(ground, level) - 3; y--)
-                    set(x, y, z, Block.Dirt);
-                const top = Math.max(level + clearance, ground + 1);
-                for (let y = level + 1; y <= top; y++)
-                    set(x, y, z, Block.Air);
-            }
-        }
-    };
-
-    const roads = () => {
-        for (let t = PATH_ARM_START; t <= PATH_ARM_END; t++) {
-            flatten(centerX + t, centerZ - 1, 1, 3, Block.Path, 4);
-            flatten(centerX - t, centerZ - 1, 1, 3, Block.Path, 4);
-            flatten(centerX - 1, centerZ + t, 3, 1, Block.Path, 4);
-            flatten(centerX - 1, centerZ - t, 3, 1, Block.Path, 4);
-        }
-        for (const [ox, oz] of CONNECTORS) {
-            flatten(centerX + ox, centerZ + oz, 3, 3, Block.Path, 4);
-        }
-    };
-
-    const well = () => {
-        flatten(centerX - 3, centerZ - 3, 7, 7, Block.Path, 7);
-        for (let x = -2; x <= 2; x++) {
-            for (let z = -2; z <= 2; z++)
-                set(centerX + x, level, centerZ + z, Block.StoneBricks);
-        }
-        for (let x = -1; x <= 1; x++) {
-            for (let z = -1; z <= 1; z++) {
-                if (x === 0 && z === 0)
-                    continue;
-                set(centerX + x, level + 1, centerZ + z, Block.Cobblestone);
-            }
-        }
-        for (let y = level - 2; y <= level + 1; y++)
-            set(centerX, y, centerZ, Block.Water);
-        for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-            set(centerX + x, level + 2, centerZ + z, Block.Log);
-            set(centerX + x, level + 3, centerZ + z, Block.Log);
-        }
-        for (let x = -2; x <= 2; x++) {
-            for (let z = -2; z <= 2; z++)
-                set(centerX + x, level + 4, centerZ + z, Block.Planks);
-        }
-    };
-
-    const lamps = () => {
-        for (const [ox, oz] of LAMP_POSTS) {
-            flatten(centerX + ox, centerZ + oz, 1, 1, Block.Path, 5);
-            for (let y = level + 1; y <= level + 3; y++)
-                set(centerX + ox, y, centerZ + oz, Block.Log);
-            set(centerX + ox, level + 4, centerZ + oz, Block.Hay);
-        }
-    };
-
-    const house = (x0, z0, w, d, job) => {
-        flatten(x0, z0, w, d, Block.Planks, 8);
-        const x1 = x0 + w - 1;
-        const z1 = z0 + d - 1;
-        for (let x = x0; x <= x1; x++) {
-            for (let z = z0; z <= z1; z++) {
-                const onEdge = x === x0 || x === x1 || z === z0 || z === z1;
-                if (!onEdge)
-                    continue;
-                const corner = (x === x0 || x === x1) && (z === z0 || z === z1);
-                for (let y = level + 1; y <= level + 3; y++) {
-                    const material = corner ? Block.Log : y === level + 1 ? Block.Cobblestone : Block.Planks;
-                    set(x, y, z, material);
-                }
-                // Windows sit at eye height, skipping the blocks beside the corners.
-                if (!corner && (x - x0 + z - z0) % 3 === 0)
-                    set(x, level + 2, z, Block.Glass);
-            }
-        }
-        carveDoor(set, x0, z0, w, d, level, centerX, centerZ);
-        for (let x = x0 - 1; x <= x1 + 1; x++) {
-            for (let z = z0 - 1; z <= z1 + 1; z++)
-                set(x, level + 4, z, Block.Planks);
-        }
-        for (let x = x0 + 1; x <= x1 - 1; x++) {
-            for (let z = z0 + 1; z <= z1 - 1; z++)
-                set(x, level + 5, z, Block.Log);
-        }
-        set(x0 + 1, level + 1, z0 + 1, Block.Bed);
-        set(x0 + 1, level + 1, z0 + 2, Block.Bed);
-        beds.push({ x: x0 + 1, y: level + 1, z: z0 + 1 });
-        if (d >= 9 && rand() < 0.6) {
-            set(x1 - 1, level + 1, z1 - 1, Block.Bed);
-            set(x1 - 1, level + 1, z1 - 2, Block.Bed);
-            beds.push({ x: x1 - 1, y: level + 1, z: z1 - 1 });
-        }
-        if (job) {
-            const jx = x0 + 1;
-            const jz = z1 - 1;
-            set(jx, level + 1, jz, JOB_BLOCKS[job]);
-            jobs.push({ x: jx, y: level + 1, z: jz, profession: job });
-        }
-        else {
-            set(x1 - 1, level + 1, z0 + 1, Block.CraftingTable);
-        }
-    };
-
-    const farm = (x0, z0, w, d) => {
-        flatten(x0, z0, w, d, Block.Farmland, 6);
-        const x1 = x0 + w - 1;
-        const z1 = z0 + d - 1;
-        const channel = z0 + Math.floor(d / 2);
-        for (let x = x0; x <= x1; x++) {
-            for (let z = z0; z <= z1; z++) {
-                if (x === x0 || x === x1 || z === z0 || z === z1) {
-                    set(x, level, z, Block.Path);
-                    continue;
-                }
-                if (z === channel) {
-                    set(x, level, z, Block.Water);
-                    continue;
-                }
-                set(x, level, z, Block.Farmland);
-                set(x, level + 1, z, Block.Wheat);
-            }
-        }
-        set(x0, level + 1, z0, Block.Hay);
-        set(x0, level + 2, z0, Block.Hay);
-        set(x1, level + 1, z1, Block.Hay);
-    };
-
-    const bellPost = () => {
-        const x = centerX + 3;
-        const z = centerZ + 3;
-        set(x, level + 1, z, Block.Log);
-        set(x, level + 2, z, Block.Log);
-        set(x, level + 3, z, Block.Bell);
-    };
-
-    roads();
-    well();
-    bellPost();
-    lamps();
-
-    const kinds = shuffle(['farmer', 'toolsmith', 'fletcher', 'house', 'house', 'farm', 'farm', 'house'], rand);
-    LOTS.forEach(([ox, oz, w, d], index) => {
-        const kind = kinds[index];
-        const x0 = centerX + ox;
-        const z0 = centerZ + oz;
-        if (kind === 'farm')
-            farm(x0, z0, w, d);
-        else
-            house(x0, z0, w, d, kind === 'house' ? null : kind);
-    });
-
-    return {
-        key,
-        centerX,
-        centerZ,
-        level,
-        beds,
-        jobs,
-        bell: { x: centerX + 3, y: level + 3, z: centerZ + 3 },
-        plan: freezePlan(blocks, centerX, centerZ),
-    };
-}
-
-/** Cuts a doorway in the wall that faces the village centre. */
-function carveDoor(set, x0, z0, w, d, level, centerX, centerZ) {
-    const midX = x0 + Math.floor(w / 2);
-    const midZ = z0 + Math.floor(d / 2);
-    const toCenterX = centerX - midX;
-    const toCenterZ = centerZ - midZ;
-    let doorX = midX;
-    let doorZ = midZ;
-    if (Math.abs(toCenterX) > Math.abs(toCenterZ))
-        doorX = toCenterX > 0 ? x0 + w - 1 : x0;
-    else
-        doorZ = toCenterZ > 0 ? z0 + d - 1 : z0;
-    set(doorX, level + 1, doorZ, Block.Air);
-    set(doorX, level + 2, doorZ, Block.Air);
-}
-
-function shuffle(values, rand) {
-    const out = [...values];
-    for (let i = out.length - 1; i > 0; i--) {
-        const j = Math.floor(rand() * (i + 1));
-        [out[i], out[j]] = [out[j], out[i]];
-    }
-    return out;
-}
-
-const KEY_SPAN = VILLAGE_RADIUS * 2 + 1;
-
-function packKey(lx, y, lz) {
-    return ((lx + VILLAGE_RADIUS) * KEY_SPAN + (lz + VILLAGE_RADIUS)) * CHUNK_HEIGHT + y;
-}
-
-/** Flattens the build map into typed arrays so chunk stamping stays cheap. */
-function freezePlan(blocks, centerX, centerZ) {
-    const size = blocks.size;
-    const xs = new Int32Array(size);
-    const ys = new Uint8Array(size);
-    const zs = new Int32Array(size);
-    const ids = new Uint8Array(size);
-    let i = 0;
-    for (const [key, id] of blocks) {
-        const y = key % CHUNK_HEIGHT;
-        const flat = (key - y) / CHUNK_HEIGHT;
-        const lz = (flat % KEY_SPAN) - VILLAGE_RADIUS;
-        const lx = (flat - (lz + VILLAGE_RADIUS)) / KEY_SPAN - VILLAGE_RADIUS;
-        xs[i] = centerX + lx;
-        ys[i] = y;
-        zs[i] = centerZ + lz;
-        ids[i] = id;
-        i++;
-    }
-    return { xs, ys, zs, ids };
-}
-
-__exports["JOB_BLOCKS"] = JOB_BLOCKS;
-__exports["villageInRegion"] = villageInRegion;
-__exports["villagesNear"] = villagesNear;
-__exports["applyVillages"] = applyVillages;
-__exports["insideVillage"] = insideVillage;
 },
 "src/entities/villager.js": function (__exports, __require) {
 'use strict';
@@ -8695,6 +9112,9 @@ class Villager {
             }
         }
 
+        if (dirX !== 0 || dirZ !== 0)
+            this.openDoorAhead(world, dirX, dirZ);
+
         moveBody(world, this, dt);
 
         if (dirX !== 0 || dirZ !== 0) {
@@ -8790,6 +9210,14 @@ class Villager {
         const z = Math.floor(this.position.z + dirZ * ahead);
         const feet = Math.floor(this.position.y);
         return world.isSolidAt(x, feet, z) && !world.isSolidAt(x, feet + 1, z) && !world.isSolidAt(x, feet + 2, z);
+    }
+
+    /** Villagers let themselves in rather than milling about outside their door. */
+    openDoorAhead(world, dirX, dirZ) {
+        const ahead = this.radius + 0.35;
+        const x = Math.floor(this.position.x + dirX * ahead);
+        const z = Math.floor(this.position.z + dirZ * ahead);
+        world.openDoor(x, Math.floor(this.position.y), z);
     }
 
     startBreedCooldown() {
@@ -8974,7 +9402,7 @@ __exports["terrainHeight"] = terrainHeight;
 "src/world/mesher.js": function (__exports, __require) {
 'use strict';
 const THREE = __require("https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js");
-const { BLOCKS, Block, blockBox, fluidGroup, fluidHeight, isCross, isCutout, isFullBlock } = __require("src/world/blocks.js");
+const { BLOCKS, Block, blockBox, doorFacing, fluidGroup, fluidHeight, isCross, isCutout, isDoor, isDoorOpen, isDoorUpper, isFullBlock } = __require("src/world/blocks.js");
 const { CHUNK_HEIGHT, CHUNK_SIZE } = __require("src/world/chunk.js");
 const { tileUVBounds } = __require("src/world/textures.js");
 /** How far a torch casts light, in blocks. */
@@ -9144,6 +9572,7 @@ function buildChunkGeometry(chunk, getBlock, torches = []) {
     const cutout = new MeshBuffer();
     const water = new MeshBuffer();
     const lava = new MeshBuffer();
+    const doors = [];
     const originX = chunk.cx * CHUNK_SIZE;
     const originZ = chunk.cz * CHUNK_SIZE;
     // Vertex positions are chunk-local, so shift the torches to match once up front.
@@ -9165,6 +9594,19 @@ function buildChunkGeometry(chunk, getBlock, torches = []) {
                 const id = chunk.get(x, y, z);
                 if (id === Block.Air)
                     continue;
+                // Doors swing, so they are drawn as their own meshes rather than baked in.
+                if (isDoor(id)) {
+                    if (!isDoorUpper(id)) {
+                        doors.push({
+                            x: originX + x,
+                            y,
+                            z: originZ + z,
+                            facing: doorFacing(id),
+                            open: isDoorOpen(id),
+                        });
+                    }
+                    continue;
+                }
                 const def = BLOCKS[id];
                 const group = fluidGroup(id);
                 const target = group === 2 ? lava : group === 1 ? water : isCutout(id) ? cutout : solid;
@@ -9189,7 +9631,7 @@ function buildChunkGeometry(chunk, getBlock, torches = []) {
             }
         }
     }
-    return { solid: solid.toGeometry(), cutout: cutout.toGeometry(), water: water.toGeometry(), lava: lava.toGeometry() };
+    return { solid: solid.toGeometry(), cutout: cutout.toGeometry(), water: water.toGeometry(), lava: lava.toGeometry(), doors };
 }
 
 __exports["TORCH_RANGE"] = TORCH_RANGE;
@@ -9324,6 +9766,12 @@ const RECIPES = [
         count: 4,
         requiresTable: true,
         ingredients: [{ id: Block.Cobblestone, count: 4 }],
+    },
+    {
+        result: Item.Door,
+        count: 3,
+        requiresTable: true,
+        ingredients: [{ id: Block.Planks, count: 6 }],
     },
 ];
 function hasIngredients(inventory, recipe) {

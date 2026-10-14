@@ -31,6 +31,7 @@ export const ITEMS = {
     [Item.Emerald]: { name: 'Emerald', color: 0x2ecc71, tool: null, sprite: true },
     [Item.Bread]: { name: 'Bread', color: 0xc08a4a, tool: null, food: { heal: 4, sickness: 0 } },
     [Item.Seeds]: { name: 'Wheat Seeds', color: 0xb6b45c, tool: null, sprite: true },
+    [Item.Door]: { name: 'Oak Door', color: 0xa07a46, tool: null, sprite: true },
 };
 export function isBlockItem(id) {
     return id < 100;
@@ -184,6 +185,17 @@ function drawFoodIcon(ctx, size, id) {
             ctx.fillRect(-s * 0.09, -s * 0.01, s * 0.18, s * 0.02);
             ctx.restore();
         }
+        return;
+    }
+    if (id === Item.Door) {
+        ctx.fillStyle = hex(ITEMS[id].color);
+        ctx.fillRect(s * 0.3, s * 0.12, s * 0.4, s * 0.76);
+        ctx.fillStyle = '#4f4336';
+        ctx.fillRect(s * 0.36, s * 0.2, s * 0.28, s * 0.18);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+        ctx.fillRect(s * 0.34, s * 0.44, s * 0.32, s * 0.03);
+        ctx.fillStyle = '#d8c07a';
+        ctx.fillRect(s * 0.61, s * 0.56, s * 0.06, s * 0.06);
         return;
     }
     if (id === Item.Arrow) {

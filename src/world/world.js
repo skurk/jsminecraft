@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, canPlantStay, hasGravity, isLava, isLiquid, isPlant, isSolid, isWater, lavaFlowId, lavaLevel, nextCropStage, waterFlowId, waterLevel } from "./blocks.js";
+import { Block, MAX_LAVA_SPREAD, MAX_WATER_SPREAD, canPlantStay, hasGravity, isDoor, isDoorOpen, isDoorUpper, isLava, isLiquid, isPlant, isSolid, isWater, lavaFlowId, lavaLevel, nextCropStage, toggledDoor, waterFlowId, waterLevel } from "./blocks.js";
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkKey } from "./chunk.js";
 import { buildChunkGeometry, TORCH_RANGE } from "./mesher.js";
 import { generateChunk } from "./terrain.js";
@@ -12,6 +12,8 @@ const LAVA_TICKS = 19;
 // Ticks a crop spends in each stage, so a field ripens in roughly one to two minutes.
 const CROP_MIN_TICKS = 220;
 const CROP_MAX_TICKS = 460;
+/** Blocks of soil a crop may sit from water and still be watered. */
+const CROP_WATER_RANGE = 4;
 function cropTicks() {
     return CROP_MIN_TICKS + Math.floor(Math.random() * (CROP_MAX_TICKS - CROP_MIN_TICKS));
 }
@@ -42,6 +44,8 @@ export class World {
     torches = new Map();
     /** Position key to ticks left before the crop there moves to its next stage. */
     growing = new Map();
+    /** Called with a chunk key and the doors it contains after every re-mesh. */
+    onDoors = null;
     daylightUniform = { value: 1 };
     constructor(scene, renderDistance = 6) {
         this.scene = scene;
@@ -111,6 +115,12 @@ export class World {
             return;
         chunk.set(lx, y, lz, id);
         chunk.dirty = true;
+        // Breaking one half of a door takes the other half with it.
+        if (isDoor(previous) && id === Block.Air) {
+            const otherY = isDoorUpper(previous) ? y - 1 : y + 1;
+            if (isDoor(this.getBlock(x, otherY, z)))
+                this.setBlock(x, otherY, z, Block.Air);
+        }
         const key = `${x},${y},${z}`;
         if (nextCropStage(id) !== null)
             this.growing.set(key, cropTicks());
@@ -199,9 +209,24 @@ export class World {
                 this.growing.delete(key);
                 continue;
             }
+            // Dry soil holds the stage back, and is checked again a stage later.
+            if (!this.soilWatered(x, y - 1, z)) {
+                this.growing.set(key, cropTicks());
+                continue;
+            }
             // setBlock re-registers the new stage, or drops it once ripe.
             this.setBlock(x, y, z, next);
         }
+    }
+    /** True when water sits within reach of the soil, at its own level or just below. */
+    soilWatered(x, y, z) {
+        for (let dx = -CROP_WATER_RANGE; dx <= CROP_WATER_RANGE; dx++) {
+            for (let dz = -CROP_WATER_RANGE; dz <= CROP_WATER_RANGE; dz++) {
+                if (isWater(this.getBlock(x + dx, y, z + dz)) || isWater(this.getBlock(x + dx, y - 1, z + dz)))
+                    return true;
+            }
+        }
+        return false;
     }
     flowWater(x, y, z, id) {
         const level = waterLevel(id);
@@ -286,6 +311,27 @@ export class World {
     isSolidAt(x, y, z) {
         return isSolid(this.getBlock(x, y, z));
     }
+    /** Swings both halves of the door at this spot; returns its lower block's y. */
+    setDoorOpen(x, y, z, open) {
+        const id = this.getBlock(x, y, z);
+        if (!isDoor(id))
+            return null;
+        const base = isDoorUpper(id) ? y - 1 : y;
+        for (let dy = 0; dy <= 1; dy++) {
+            const half = this.getBlock(x, base + dy, z);
+            if (isDoor(half) && isDoorOpen(half) !== open)
+                this.setBlock(x, base + dy, z, toggledDoor(half));
+        }
+        return base;
+    }
+    /** Lets a walker push a shut door open, leaving anything else alone. */
+    openDoor(x, y, z) {
+        const id = this.getBlock(x, y, z);
+        if (!isDoor(id) || isDoorOpen(id))
+            return false;
+        this.setDoorOpen(x, y, z, true);
+        return true;
+    }
     isLiquidAt(x, y, z) {
         return isLiquid(this.getBlock(x, y, z));
     }
@@ -360,6 +406,7 @@ export class World {
             if (distSq > (r + 2) * (r + 2)) {
                 chunk.dispose(this.scene);
                 this.chunks.delete(chunkKey(chunk.cx, chunk.cz));
+                this.onDoors?.(chunkKey(chunk.cx, chunk.cz), []);
                 this.forgetTorches(chunk.cx, chunk.cz);
                 this.forgetCrops(chunk.cx, chunk.cz);
                 continue;
@@ -409,8 +456,9 @@ export class World {
         this.pendingUpdates.add(`${x},${y},${z}`);
     }
     rebuild(chunk) {
-        const { solid, cutout, water, lava } = buildChunkGeometry(chunk, (x, y, z) => this.getBlock(x, y, z), this.torchesNear(chunk.cx, chunk.cz));
+        const { solid, cutout, water, lava, doors } = buildChunkGeometry(chunk, (x, y, z) => this.getBlock(x, y, z), this.torchesNear(chunk.cx, chunk.cz));
         chunk.dispose(this.scene);
+        this.onDoors?.(chunkKey(chunk.cx, chunk.cz), doors);
         const originX = chunk.cx * CHUNK_SIZE;
         const originZ = chunk.cz * CHUNK_SIZE;
         const place = (geometry, material, renderOrder) => {

@@ -17,9 +17,11 @@ import { Hand } from "./player/hand.js";
 import { HOTBAR_SIZE, Hotbar } from "./player/hotbar.js";
 import { Inventory } from "./player/inventory.js";
 import { Player } from "./player/player.js";
-import { BLOCKS, Block, blockDrops, blockSurface, isBreakable, isCrop, isLava, isLog, isPlaceable, isSowable, isTillable, isWater } from "./world/blocks.js";
+import { BLOCKS, Block, DOOR_FACINGS, blockDrops, blockSurface, doorId, isBreakable, isCrop, isDoor, isDoorOpen, isLava, isLog, isPlaceable, isSowable, isTillable, isWater } from "./world/blocks.js";
 import { CHUNK_SIZE } from "./world/chunk.js";
+import { DoorManager } from "./world/doors.js";
 import { SEA_LEVEL, biomeNameAt, terrainHeight } from "./world/terrain.js";
+import { nearestVillage } from "./world/village.js";
 import { updateFluidAnimation } from "./world/textures.js";
 import { World, raycast } from "./world/world.js";
 import { Hud } from "./ui/hud.js";
@@ -62,6 +64,13 @@ const LAVA_COLOR = 0x8a2a04;
 /** Half-width of the area the starting position is drawn from. */
 const SPAWN_RANGE = 4000;
 const SPAWN_ATTEMPTS = 200;
+/** Rings of regions searched for a village before giving up on ?spawnpoint=village. */
+const VILLAGE_SEARCH_RINGS = 4;
+/** Offsets from a village well to try standing on, along the road arms. */
+const VILLAGE_SPAWN_OFFSETS = [];
+for (const distance of [16, 12, 8])
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+        VILLAGE_SPAWN_OFFSETS.push([dx * distance, dz * distance]);
 const OVERCAST_COLOR = new THREE.Color(0x5c6572);
 const LIGHTNING_COLOR = new THREE.Color(0xdfe7f5);
 const app = document.querySelector('#app');
@@ -80,6 +89,8 @@ let fogFar = RENDER_DISTANCE * CHUNK_SIZE;
 scene.fog = new THREE.Fog(0x000000, fogFar * 0.55, fogFar);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const world = new World(scene, RENDER_DISTANCE);
+const doors = new DoorManager(scene, world.solidMaterial);
+world.onDoors = (chunkKey, list) => doors.sync(chunkKey, list);
 const day = new DayCycle();
 const sky = new Sky(scene);
 const weather = new Weather(scene);
@@ -110,6 +121,11 @@ items.onPickup = (id) => {
 };
 /** Dry land with headroom; the cheap height test runs first so few chunks are generated. */
 function findSpawn() {
+    if (new URLSearchParams(window.location.search).get('spawnpoint') === 'village') {
+        const village = findVillageSpawn();
+        if (village)
+            return village;
+    }
     for (let attempt = 0; attempt < SPAWN_ATTEMPTS; attempt++) {
         const x = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
         const z = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
@@ -126,6 +142,36 @@ function findSpawn() {
         return new THREE.Vector3(x + 0.5, height + 1, z + 0.5);
     }
     return new THREE.Vector3(8.5, Math.max(terrainHeight(8, 8), SEA_LEVEL) + 2, 8.5);
+}
+/** A standable spot on the outskirts of the village nearest a random column. */
+function findVillageSpawn() {
+    const x = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
+    const z = Math.floor((Math.random() * 2 - 1) * SPAWN_RANGE);
+    const site = nearestVillage(x, z, VILLAGE_SEARCH_RINGS);
+    if (!site)
+        return null;
+    for (const [dx, dz] of VILLAGE_SPAWN_OFFSETS) {
+        const spot = standingSpot(site.centerX + dx, site.centerZ + dz, site.level);
+        if (spot)
+            return spot;
+    }
+    return null;
+}
+/**
+ * The surface of a column near a known ground level. Villages flatten the land
+ * they sit on, so the generated terrain height is no guide there.
+ */
+function standingSpot(x, z, level) {
+    for (let y = level + 6; y > level - 8; y--) {
+        if (!world.isSolidAt(x, y, z))
+            continue;
+        if (isLava(world.getBlock(x, y, z)))
+            return null;
+        if (world.getBlock(x, y + 1, z) !== Block.Air || world.getBlock(x, y + 2, z) !== Block.Air)
+            return null;
+        return new THREE.Vector3(x + 0.5, y + 1, z + 0.5);
+    }
+    return null;
 }
 const spawnPoint = findSpawn();
 const player = new Player(spawnPoint.x, spawnPoint.y, spawnPoint.z);
@@ -231,6 +277,39 @@ function sowSeeds(hit) {
     world.setBlock(target.x, target.y, target.z, Block.WheatSprout);
     refreshHotbar();
 }
+/** A door hangs facing whoever put it up, and takes up the two blocks above the ground. */
+function placeDoor(hit) {
+    if (hit.normal.y !== 1)
+        return;
+    const base = hit.block.clone().add(hit.normal);
+    const head = { x: base.x, y: base.y + 1, z: base.z };
+    if (world.getBlock(base.x, base.y, base.z) !== Block.Air || world.getBlock(head.x, head.y, head.z) !== Block.Air)
+        return;
+    if (overlapsPlayer(base) || overlapsPlayer(head))
+        return;
+    if (!inventory.take(Item.Door))
+        return;
+    const facing = doorFacingFromYaw();
+    world.setBlock(base.x, base.y, base.z, doorId(false, facing, false));
+    world.setBlock(head.x, head.y, head.z, doorId(true, facing, false));
+    audio.playDoor(false);
+    refreshHotbar();
+}
+/** The facing whose outward normal points back at the player. */
+function doorFacingFromYaw() {
+    const fx = Math.sin(player.yaw);
+    const fz = Math.cos(player.yaw);
+    let best = 0;
+    let bestDot = -Infinity;
+    DOOR_FACINGS.forEach((facing, index) => {
+        const dot = facing.dx * fx + facing.dz * fz;
+        if (dot > bestDot) {
+            bestDot = dot;
+            best = index;
+        }
+    });
+    return best;
+}
 /** Q throws one of the held stack on the ground, where it stays until picked up. */
 function dropHeldItem() {
     if (!input.locked || menu.open || trade.open || player.health <= 0)
@@ -327,6 +406,13 @@ input.onMouseDown = (button) => {
             openMenu(true);
             return;
         }
+        if (isDoor(targetedBlock)) {
+            const open = !isDoorOpen(targetedBlock);
+            const bottom = world.setDoorOpen(hit.block.x, hit.block.y, hit.block.z, open);
+            doors.setOpen(hit.block.x, bottom, hit.block.z, open);
+            audio.playDoor(open);
+            return;
+        }
         // Food wins over picking fruit, so you can eat while stood under a tree.
         const held = heldItem();
         const food = foodOf(held);
@@ -360,6 +446,10 @@ input.onMouseDown = (button) => {
         }
         if (held === Item.Seeds) {
             sowSeeds(hit);
+            return;
+        }
+        if (held === Item.Door) {
+            placeDoor(hit);
             return;
         }
         const blockId = hotbar.item;
@@ -563,6 +653,7 @@ function animate() {
     audio.setUnderwater(running && player.submerged ? 1 : 0);
     explosions.update(dt);
     particles.update(dt);
+    doors.update(dt);
     updateMining(dt);
     updateHeldItem();
     hand.update(dt);

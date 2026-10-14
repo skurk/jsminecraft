@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCKS, Block, blockBox, fluidGroup, fluidHeight, isCross, isCutout, isFullBlock } from "./blocks.js";
+import { BLOCKS, Block, blockBox, doorFacing, fluidGroup, fluidHeight, isCross, isCutout, isDoor, isDoorOpen, isDoorUpper, isFullBlock } from "./blocks.js";
 import { CHUNK_HEIGHT, CHUNK_SIZE } from "./chunk.js";
 import { tileUVBounds } from "./textures.js";
 /** How far a torch casts light, in blocks. */
@@ -169,6 +169,7 @@ export function buildChunkGeometry(chunk, getBlock, torches = []) {
     const cutout = new MeshBuffer();
     const water = new MeshBuffer();
     const lava = new MeshBuffer();
+    const doors = [];
     const originX = chunk.cx * CHUNK_SIZE;
     const originZ = chunk.cz * CHUNK_SIZE;
     // Vertex positions are chunk-local, so shift the torches to match once up front.
@@ -190,6 +191,19 @@ export function buildChunkGeometry(chunk, getBlock, torches = []) {
                 const id = chunk.get(x, y, z);
                 if (id === Block.Air)
                     continue;
+                // Doors swing, so they are drawn as their own meshes rather than baked in.
+                if (isDoor(id)) {
+                    if (!isDoorUpper(id)) {
+                        doors.push({
+                            x: originX + x,
+                            y,
+                            z: originZ + z,
+                            facing: doorFacing(id),
+                            open: isDoorOpen(id),
+                        });
+                    }
+                    continue;
+                }
                 const def = BLOCKS[id];
                 const group = fluidGroup(id);
                 const target = group === 2 ? lava : group === 1 ? water : isCutout(id) ? cutout : solid;
@@ -214,5 +228,5 @@ export function buildChunkGeometry(chunk, getBlock, torches = []) {
             }
         }
     }
-    return { solid: solid.toGeometry(), cutout: cutout.toGeometry(), water: water.toGeometry(), lava: lava.toGeometry() };
+    return { solid: solid.toGeometry(), cutout: cutout.toGeometry(), water: water.toGeometry(), lava: lava.toGeometry(), doors };
 }

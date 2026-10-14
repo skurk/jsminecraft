@@ -24,4 +24,5 @@ export const Item = {
     Emerald: 210,
     Bread: 211,
     Seeds: 212,
+    Door: 213,
 };

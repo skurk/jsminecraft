@@ -466,6 +466,23 @@ function paintBellSide(ctx, rand) {
         }
     }
 }
+/** Panelled planks; the upper half carries a window, the lower half a handle. */
+function paintDoor(ctx, tile, upper, rand) {
+    const [ox, oy] = tileOrigin(tile);
+    const wood = [160, 124, 74];
+    const pane = [128, 176, 198];
+    for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+            const frame = x < 2 || x > 13 || (upper && y < 2) || (!upper && y > 13);
+            const window = upper && !frame && y > 2 && y < 8 && x > 3 && x < 12;
+            const handle = !upper && y > 6 && y < 9 && x > 10 && x < 13;
+            const seam = !frame && y % 5 === 0 ? -26 : 0;
+            const base = window ? pane : wood;
+            const tone = frame ? -24 : handle ? 46 : seam;
+            px(ctx, ox + x, oy + y, shade(base, tone + (rand() * 2 - 1) * 8));
+        }
+    }
+}
 function buildAtlasCanvas() {
     const canvas = document.createElement('canvas');
     canvas.width = ATLAS_COLS * TILE_PX;
@@ -526,6 +543,8 @@ function buildAtlasCanvas() {
     paintFletchingSide(ctx, rand);
     paintBellTop(ctx, rand);
     paintBellSide(ctx, rand);
+    paintDoor(ctx, Tile.DoorLower, false, rand);
+    paintDoor(ctx, Tile.DoorUpper, true, rand);
     return canvas;
 }
 export const atlasCanvas = buildAtlasCanvas();

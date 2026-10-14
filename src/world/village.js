@@ -1,5 +1,5 @@
 import { mulberry32 } from "../engine/noise.js";
-import { Block } from "./blocks.js";
+import { Block, DoorFacing, doorId } from "./blocks.js";
 import { CHUNK_HEIGHT, CHUNK_SIZE } from "./chunk.js";
 import { SEA_LEVEL, terrainHeight } from "./heightmap.js";
 
@@ -94,6 +94,33 @@ export function villagesNear(x, z, radius) {
         }
     }
     return found;
+}
+
+/** The closest village to a column, searching one ring of regions outwards at a time. */
+export function nearestVillage(x, z, maxRings) {
+    const rx = regionOf(x);
+    const rz = regionOf(z);
+    for (let ring = 0; ring <= maxRings; ring++) {
+        let closest = null;
+        let closestDistance = Infinity;
+        for (let dz = -ring; dz <= ring; dz++) {
+            for (let dx = -ring; dx <= ring; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring)
+                    continue;
+                const site = villageInRegion(rx + dx, rz + dz);
+                if (!site)
+                    continue;
+                const distance = Math.hypot(site.centerX - x, site.centerZ - z);
+                if (distance < closestDistance) {
+                    closest = site;
+                    closestDistance = distance;
+                }
+            }
+        }
+        if (closest)
+            return closest;
+    }
+    return null;
 }
 
 /** Stamps every village overlapping the chunk; called during terrain generation. */
@@ -341,7 +368,7 @@ function buildPlan(key, centerX, centerZ, level, rand) {
     };
 }
 
-/** Cuts a doorway in the wall that faces the village centre. */
+/** Hangs a door in the wall that faces the village centre. */
 function carveDoor(set, x0, z0, w, d, level, centerX, centerZ) {
     const midX = x0 + Math.floor(w / 2);
     const midZ = z0 + Math.floor(d / 2);
@@ -349,12 +376,17 @@ function carveDoor(set, x0, z0, w, d, level, centerX, centerZ) {
     const toCenterZ = centerZ - midZ;
     let doorX = midX;
     let doorZ = midZ;
-    if (Math.abs(toCenterX) > Math.abs(toCenterZ))
+    let facing;
+    if (Math.abs(toCenterX) > Math.abs(toCenterZ)) {
         doorX = toCenterX > 0 ? x0 + w - 1 : x0;
-    else
+        facing = toCenterX > 0 ? DoorFacing.East : DoorFacing.West;
+    }
+    else {
         doorZ = toCenterZ > 0 ? z0 + d - 1 : z0;
-    set(doorX, level + 1, doorZ, Block.Air);
-    set(doorX, level + 2, doorZ, Block.Air);
+        facing = toCenterZ > 0 ? DoorFacing.South : DoorFacing.North;
+    }
+    set(doorX, level + 1, doorZ, doorId(false, facing, false));
+    set(doorX, level + 2, doorZ, doorId(true, facing, false));
 }
 
 function shuffle(values, rand) {

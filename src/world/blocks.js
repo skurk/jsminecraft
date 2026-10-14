@@ -56,6 +56,8 @@ export const Block = {
     WheatSprout: 51,
     WheatYoung: 52,
     WheatTall: 53,
+    // First of 16 door states: lower/upper half x four facings x open/closed.
+    Door: 54,
 };
 /** Index into the procedurally generated texture atlas. */
 export const Tile = {
@@ -112,6 +114,8 @@ export const Tile = {
     WheatSprout: 50,
     WheatYoung: 51,
     WheatTall: 52,
+    DoorLower: 53,
+    DoorUpper: 54,
 };
 export const BLOCKS = [
     {
@@ -621,6 +625,59 @@ BLOCKS.push({
     cross: true,
     placeable: false,
 });
+/**
+ * The way a door looks, as the horizontal normal of its closed face. `angle` is
+ * the Y rotation that turns the canonical north-facing door into this one.
+ */
+export const DOOR_FACINGS = [
+    { dx: 0, dz: -1, angle: 0 },
+    { dx: -1, dz: 0, angle: Math.PI / 2 },
+    { dx: 0, dz: 1, angle: Math.PI },
+    { dx: 1, dz: 0, angle: -Math.PI / 2 },
+];
+export const DoorFacing = { North: 0, West: 1, South: 2, East: 3 };
+const DOOR_STATES = DOOR_FACINGS.length * 4;
+// Doors carry their own geometry, so the chunk mesher skips them; only the id
+// matters here, for collision and for what the block drops.
+for (let state = 0; state < DOOR_STATES; state++) {
+    const upper = state >= DOOR_STATES / 2;
+    const open = state % 2 === 1;
+    const tile = upper ? Tile.DoorUpper : Tile.DoorLower;
+    BLOCKS.push({
+        name: 'Oak Door',
+        solid: !open,
+        liquid: false,
+        top: tile,
+        side: tile,
+        bottom: tile,
+        hardness: 0.6,
+        tool: 'axe',
+        requiresTool: false,
+        drop: Item.Door,
+        // Only the lower half yields the door, so breaking either gives one back.
+        drops: upper ? [] : [{ id: Item.Door }],
+        full: false,
+        placeable: false,
+    });
+}
+export function isDoor(id) {
+    return id >= Block.Door && id < Block.Door + DOOR_STATES;
+}
+export function isDoorUpper(id) {
+    return id - Block.Door >= DOOR_STATES / 2;
+}
+export function isDoorOpen(id) {
+    return (id - Block.Door) % 2 === 1;
+}
+export function doorFacing(id) {
+    return Math.floor(((id - Block.Door) % (DOOR_STATES / 2)) / 2);
+}
+export function doorId(upper, facing, open) {
+    return Block.Door + (upper ? DOOR_STATES / 2 : 0) + facing * 2 + (open ? 1 : 0);
+}
+export function toggledDoor(id) {
+    return isDoorOpen(id) ? id - 1 : id + 1;
+}
 const UNIT_BOX = [0, 0, 0, 1, 1, 1];
 /** False for blocks that do not fill their voxel, so neighbours keep their faces. */
 export function isFullBlock(id) {
@@ -736,6 +793,8 @@ export function isAir(id) {
 }
 /** Which procedural footstep voicing a block uses when walked on. */
 export function blockSurface(id) {
+    if (isDoor(id))
+        return 'wood';
     switch (id) {
         case Block.Grass:
         case Block.TallGrass:
